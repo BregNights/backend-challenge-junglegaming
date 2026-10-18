@@ -2,6 +2,7 @@ import { GetQueueUrlCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { MikroORM } from "@mikro-orm/core";
 import { Controller, Get, Inject, Res } from "@nestjs/common";
 import type { Response } from "express";
+import { Public } from "../auth/auth.guard";
 import { AppConfig } from "../config/app-config";
 
 const CHECK_TIMEOUT_MS = 2_000;
@@ -12,6 +13,7 @@ interface DependencyCheck {
 }
 
 /** Health endpoints are intentionally unauthenticated (see ARCHITECTURE.md). */
+@Public()
 @Controller("health")
 export class HealthController {
   constructor(

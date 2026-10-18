@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { APP_FILTER } from "@nestjs/core";
 import { MessagingModule } from "./messaging/messaging.module";
 import { PersistenceModule } from "./persistence/persistence.module";
+import { AuthModule } from "./platform/auth/auth.module";
 import { ConfigModule } from "./platform/config/config.module";
 import { CoreModule } from "./platform/core.module";
 import { DatabaseModule } from "./platform/database/database.module";
@@ -18,6 +19,7 @@ import { WalletModule } from "./wallet/wallet.module";
     ConfigModule,
     LoggingModule,
     CoreModule,
+    AuthModule,
     ObservabilityModule,
     DatabaseModule,
     PersistenceModule,

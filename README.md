@@ -88,6 +88,9 @@ As variáveis de ambiente estão documentadas em [.env.example](.env.example).
       integração.
 - [x] `Money` com testes de unidade.
 - [x] Health checks: liveness e readiness (Postgres e SQS).
+- [x] Autenticação: IdP não integrado (decisão documentada), mas o ponto de extensão está no código:
+      `ProviderIdentityPort`, `AuthGuard` global com `@Public()` para health e métricas, e a regra de
+      que um provedor só age sobre as próprias operações. Coberto por um teste que troca o adaptador.
 - [x] Domínio: `Wallet`, `WalletLedgerEntry`, `WagerTransaction` (máquina de estados), regras de
       `BET`/`WIN`/`LOSS`/`REFUND`/`ROLLBACK`, eventos de integração e `OutboxMessage`, com testes de unidade.
 - [x] Persistência MikroORM: `EntitySchema` sem decorators, mappers, Unit of Work por fork e tradução de

@@ -2,8 +2,10 @@ import { type ArgumentsHost, Catch, type ExceptionFilter, HttpException, HttpSta
 import type { Request, Response } from "express";
 import {
   IdempotencyConflictError,
+  ProviderForbiddenError,
   TransactionNotFoundError,
   TransientInfrastructureError,
+  UnauthenticatedError,
   ValidationError,
   WalletAlreadyExistsError,
   WalletNotFoundError,
@@ -23,9 +25,9 @@ const RETRY_AFTER_SECONDS = "1";
 
 /**
  * One mapping for every endpoint, so the status code alone tells a provider
- * what to do: 400 fix the payload, 404 unknown resource, 409 idempotency
- * conflict, 422 business rejection (returned by controllers, not thrown),
- * 503 retry later with the same key.
+ * what to do: 400 fix the payload, 401/403 credentials, 404 unknown resource,
+ * 409 idempotency conflict, 422 business rejection (returned by controllers,
+ * not thrown), 503 retry later with the same key.
  */
 @Catch()
 export class HttpErrorFilter implements ExceptionFilter {
@@ -54,6 +56,16 @@ export class HttpErrorFilter implements ExceptionFilter {
       exception instanceof InvalidWalletOperationError
     ) {
       return { status: 400, body: { error: exception.code, message: exception.message } };
+    }
+    if (exception instanceof UnauthenticatedError) {
+      return {
+        status: 401,
+        body: { error: exception.code, message: exception.message },
+        headers: { "WWW-Authenticate": "Bearer" },
+      };
+    }
+    if (exception instanceof ProviderForbiddenError) {
+      return { status: 403, body: { error: exception.code, message: exception.message } };
     }
     if (exception instanceof WalletNotFoundError || exception instanceof TransactionNotFoundError) {
       return { status: 404, body: { error: exception.code, message: exception.message } };

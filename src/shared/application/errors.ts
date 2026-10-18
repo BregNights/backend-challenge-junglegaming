@@ -54,6 +54,16 @@ export class IdempotencyConflictError extends ApplicationError {
   readonly code = "IDEMPOTENCY_CONFLICT";
 }
 
+/** Missing or invalid credentials: 401. */
+export class UnauthenticatedError extends ApplicationError {
+  readonly code = "UNAUTHENTICATED";
+}
+
+/** Authenticated provider acting on another provider's operations: 403. */
+export class ProviderForbiddenError extends ApplicationError {
+  readonly code = "PROVIDER_FORBIDDEN";
+}
+
 /** Same transport message id with a different body: a producer bug, never retried. */
 export class InboxConflictError extends ApplicationError {
   readonly code = "INBOX_CONFLICT";

@@ -59,7 +59,7 @@ export function apiClient(baseUrl: string) {
   }
 
   return {
-    get: <T = any>(path: string) => request<T>("GET", path),
+    get: <T = any>(path: string, headers?: Record<string, string>) => request<T>("GET", path, undefined, headers),
     post: <T = any>(path: string, body?: unknown, headers?: Record<string, string>) => request<T>("POST", path, body, headers),
   };
 }

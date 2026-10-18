@@ -72,7 +72,8 @@ src/
     application/      OutboxPublisher + porta EventPublisher
     workers/          OutboxPublisherWorker
   persistence/        adapter MikroORM: records, mappers, repositórios, UnitOfWork, tradução de erros
-  platform/           config, database (ORM + migrations), logging, health, métricas, filtro HTTP, SQS
+  platform/           config, database (ORM + migrations), auth (guard + adaptador no-op), logging,
+                      health, métricas, filtro HTTP, SQS
 ```
 
 Wallet e wagering formam **um único limite de consistência**: toda operação de aposta altera a wallet
@@ -206,6 +207,65 @@ COMMIT  →  só então: resposta HTTP ou ack no SQS; métricas e logs também s
   (nunca `null`), `amount` na forma canônica de 2 casas.
 - Ficam fora: o header `Idempotency-Key` e os metadados de transporte (`messageId`, `type`,
   `occurredAt`).
+
+### Máquina de estados da `WagerTransaction`
+
+Implementação: [`WagerTransaction`](src/wagering/domain/wager-transaction.ts), com as decisões tomadas
+em [`settleWagerTransaction`](src/wagering/domain/wager-settlement.ts).
+
+```
+                      markProcessed
+            ┌──────────────────────────────────────────► PROCESSED
+            │          reject                              (terminal)
+  create ─► PENDING ──────────────────────────────────────► REJECTED
+            │          fail                                (terminal)
+            ├─────────────────────────────────────────────► FAILED
+            │                                              (terminal)
+            │  markPendingReference
+            └─────────────────────► PENDING_REFERENCE ──┬─ markProcessed ─► PROCESSED
+                                      │          ▲      ├─ reject ────────► REJECTED
+                                      └──────────┘      └─ fail ──────────► FAILED
+                                  markPendingReference
+                                   (nova tentativa)
+
+  opening ─► PROCESSED        (o OPENING interno já nasce aplicado)
+```
+
+| De | Para | Transição | Quando | O que é gravado |
+|---|---|---|---|---|
+| — | `PENDING` | `create` | Operação de provedor válida (kind, referência obrigatória ou proibida, valor) | Nada ainda: é decidida na mesma transação SQL |
+| — | `PROCESSED` | `opening` | Wallet criada com saldo inicial maior que zero | `balance_after`, `processed_at` e o lançamento `CREDIT` |
+| `PENDING` ou `PENDING_REFERENCE` | `PROCESSED` | `markProcessed` | Todas as regras satisfeitas | `reference_transaction_id` (obrigatório em REFUND/ROLLBACK), `balance_after`, `processed_at` e o lançamento, se a operação mexe no saldo |
+| `PENDING` ou `PENDING_REFERENCE` | `REJECTED` | `reject` | Regra de negócio violada, ou TTL da referência esgotado | `failure_code` e `balance_after` (o saldo observado, devolvido nos replays) |
+| `PENDING` ou `PENDING_REFERENCE` | `PENDING_REFERENCE` | `markPendingReference` | Referência ausente, ou existente mas ainda não terminal | `attempts + 1` e `next_attempt_at` (backoff) |
+| `PENDING` ou `PENDING_REFERENCE` | `FAILED` | `fail` | Erro permanente de infraestrutura depois de a transação existir | `failure_code` |
+
+Regras:
+
+- **Estados terminais:** `PROCESSED`, `REJECTED` e `FAILED`. Qualquer transição a partir deles lança
+  `InvalidTransactionStateError`. Isso é erro de programação, não caminho de negócio.
+- **O banco garante o mesmo** ([seção 7](#7-schema-e-constraints)):
+  - o trigger `wager_transactions_guard` bloqueia `UPDATE` de linha terminal, mudança das colunas de
+    identidade e `DELETE`;
+  - os CHECKs exigem `failure_code` se e somente se o status é `REJECTED`/`FAILED`, `processed_at` se
+    e somente se é `PROCESSED`, `next_attempt_at` em `PENDING_REFERENCE`, `balance_after` em
+    `PROCESSED`/`REJECTED` e referência resolvida em REFUND/ROLLBACK processados.
+- **`PENDING` não chega ao banco na prática:** a transação nasce e é decidida dentro da mesma transação
+  SQL. O estado existe no modelo de domínio e o schema o aceita.
+- **Quem conduz as transições:**
+  - `ProcessWagerTransaction` (HTTP e SQS) decide as transações novas;
+  - `ResolvePendingReference` (worker) decide as que estão em `PENDING_REFERENCE`.
+
+  Os dois chamam `settleWagerTransaction` com a wallet travada.
+- **Ordem das verificações na liquidação:**
+  1. player dono da wallet (`PLAYER_WALLET_MISMATCH`);
+  2. moeda (`CURRENCY_MISMATCH`);
+  3. referência: escopo, kind permitido, se já é terminal, se foi processada, valor e reversão única;
+  4. saldo (`INSUFFICIENT_FUNDS` ou `REVERSAL_INSUFFICIENT_FUNDS`).
+- **`FAILED` fica reservado.** Hoje nenhum caminho o grava. Falhas permanentes de mensagens (envelope
+  inválido, wallet inexistente) vão para a DLQ, com o motivo, antes de existir uma transação válida a
+  registrar. O estado existe para falhas descobertas depois de a transação existir, como um
+  reprocessamento manual que esgotou as tentativas.
 
 ## 7. Schema e constraints
 
@@ -399,6 +459,8 @@ O mesmo mapeamento vale em todos os endpoints. O corpo sempre traz `status` e, s
 | Wallet criada | `201` |
 | Aceita, aguardando referência (`PENDING_REFERENCE`) | `202` |
 | Payload inválido | `400` |
+| Credencial ausente ou inválida (quando um IdP estiver ligado) | `401` |
+| Provedor agindo sobre operações de outro provedor | `403` |
 | Recurso inexistente | `404` |
 | Conflito de idempotência ou wallet duplicada | `409` |
 | Rejeição de negócio (inclusive em replay); também `FAILED` (terminal) | `422` |
@@ -452,20 +514,34 @@ Também ficam expostas as métricas padrão do processo.
 
 ## 13. Autenticação
 
-**Decisão: não implementar nesta entrega.** Autenticação não pontua, e o tempo foi para correção
-financeira, concorrência e idempotência. Desenho que seria adotado:
+**Decisão: não integrar um IdP nesta entrega.** Autenticação não pontua, e o tempo foi para correção
+financeira, concorrência e idempotência. O ponto de extensão, porém, está no código e testado.
 
-- **IdP externo (Keycloak) via OIDC**, um client confidencial por provedor de jogos, no fluxo
+**Ponto de extensão (implementado):**
+
+| Peça | Papel |
+|---|---|
+| [`ProviderIdentityPort`](src/shared/application/provider-identity.ts) | Resolve quem chama (`Caller`) a partir das credenciais: `unrestricted` ou `provider` (com `providerId`). Credencial ausente ou inválida lança `UnauthenticatedError`. |
+| [`AuthGuard`](src/platform/auth/auth.guard.ts) | Guard global (`APP_GUARD`): toda rota é autenticada, exceto as marcadas com `@Public()` (`/health/*` e `/metrics`). Só resolve o caller; não decide permissões. |
+| [`NoAuthProviderIdentity`](src/platform/auth/no-auth.provider-identity.ts) | O adaptador ligado hoje, no [`AuthModule`](src/platform/auth/auth.module.ts): todo caller é `unrestricted`. |
+| `assertCallerMayActAs` | Regra de domínio: um provedor autenticado só submete e consulta as próprias operações. Aplicada em `POST /wagering/transactions` e nos dois `GET` de transação. |
+
+- **Respostas:** credencial inválida é 401 `UNAUTHENTICATED`, com `WWW-Authenticate: Bearer`. Agir em
+  nome de outro provedor é 403 `PROVIDER_FORBIDDEN`, e nada é persistido.
+- **Prova de que o ponto de extensão funciona:** [auth.test.ts](test/integration/auth.test.ts) troca
+  o adaptador no-op por um adaptador OIDC falso e verifica o 401, o 403, as consultas restritas ao
+  próprio provedor e que health e métricas continuam abertos.
+
+**Desenho para ligar a autenticação de verdade:**
+
+- **IdP externo (Keycloak) via OIDC**, com um client confidencial por provedor de jogos, no fluxo
   `client_credentials`.
-- **Um `AuthGuard` global valida o JWT** (assinatura via JWKS, `iss`, `aud`, `exp`) e expõe a
-  identidade do provedor por uma porta `ProviderIdentityPort`.
-- **Regra de domínio:** o `providerId` do token tem de ser igual ao do payload. Caso contrário, 403. A
-  mesma validação de domínio se aplica ao `providerId` das mensagens da fila, que é canal interno
-  confiável.
-- **Fora do escopo:** `/health/*` e `/metrics`.
-
-O ponto de extensão no código será um `AuthGuard` no-op mais a `ProviderIdentityPort`, para que a troca
-pelo guard real não toque nos use cases.
+- **Um adaptador da `ProviderIdentityPort` valida o JWT** (assinatura via JWKS, `iss`, `aud`, `exp`)
+  e mapeia uma claim para o `providerId`. É a única troca necessária no código.
+- **Endpoints de wallet** (criação, ledger, reconciliação) são de operador. Com o IdP, passariam a
+  exigir um papel de back-office; hoje qualquer caller `unrestricted` os acessa.
+- **Mensagens da fila** chegam por canal interno confiável. O `providerId` delas passa pelas mesmas
+  validações de domínio (formato e resolução de referência dentro do mesmo provedor).
 
 ## 14. Interpretações adotadas
 

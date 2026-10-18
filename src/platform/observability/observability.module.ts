@@ -1,9 +1,11 @@
 import { Controller, Get, Global, Inject, Module, Res } from "@nestjs/common";
 import type { Response } from "express";
 import { WAGERING_METRICS } from "../../shared/application/metrics";
+import { Public } from "../auth/auth.guard";
 import { PrometheusMetrics } from "./prometheus-metrics";
 
 /** Prometheus scrape endpoint; unauthenticated like the health checks. */
+@Public()
 @Controller("metrics")
 class MetricsController {
   constructor(@Inject(PrometheusMetrics) private readonly metrics: PrometheusMetrics) {}
