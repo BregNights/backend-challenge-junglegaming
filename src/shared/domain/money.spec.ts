@@ -43,6 +43,19 @@ describe("Money.from", () => {
   });
 });
 
+describe("Money.rehydrate", () => {
+  test("accepts stored values, including negative computed differences", () => {
+    expect(Money.rehydrate({ amount: "975.00", currency: "BRL" }).toJSON().amount).toBe("975.00");
+    expect(Money.rehydrate({ amount: "-0.01", currency: "BRL" }).isNegative()).toBe(true);
+  });
+
+  test("keeps the strict format", () => {
+    for (const amount of ["", "1", "1.5", "--1.00", "1e3", "-01.00"]) {
+      expect(() => Money.rehydrate({ amount, currency: "BRL" })).toThrow(InvalidMoneyError);
+    }
+  });
+});
+
 describe("arithmetic", () => {
   test("adds and subtracts exactly where binary floats would drift", () => {
     expect(brl("0.10").add(brl("0.20")).toJSON().amount).toBe("0.30");

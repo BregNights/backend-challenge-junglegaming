@@ -1,5 +1,6 @@
 import { Migrator } from "@mikro-orm/migrations";
 import { defineConfig } from "@mikro-orm/postgresql";
+import { entitySchemas } from "../../persistence/records";
 import type { DatabaseConfig } from "../config/app-config";
 import { migrations } from "./migrations";
 
@@ -14,8 +15,7 @@ import { migrations } from "./migrations";
 export function buildOrmConfig(database: DatabaseConfig) {
   return defineConfig({
     clientUrl: database.url,
-    entities: [],
-    discovery: { warnWhenNoEntities: false },
+    entities: entitySchemas,
     extensions: [Migrator],
     migrations: {
       migrationsList: migrations,

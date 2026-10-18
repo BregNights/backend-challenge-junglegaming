@@ -18,6 +18,8 @@ const MAX_MINOR_UNITS = 10n ** BigInt(MAX_INTEGER_DIGITS + SCALE) - 1n;
  * other scale — nothing is ever rounded.
  */
 const AMOUNT_PATTERN = new RegExp(`^(0|[1-9]\\d{0,${MAX_INTEGER_DIGITS - 1}})\\.\\d{${SCALE}}$`);
+/** Same format, optionally negative: trusted values such as computed differences. */
+const SIGNED_AMOUNT_PATTERN = new RegExp(`^-?(0|[1-9]\\d{0,${MAX_INTEGER_DIGITS - 1}})\\.\\d{${SCALE}}$`);
 const CURRENCY_PATTERN = /^[A-Z]{3}$/;
 
 export class InvalidMoneyError extends DomainError {
@@ -58,8 +60,19 @@ export class Money {
         `Invalid amount ${JSON.stringify(amount)}: expected a non-negative decimal string with exactly ${SCALE} decimals, e.g. "25.00"`,
       );
     }
-    const [integerPart = "0", fractionPart = "0"] = amount.split(".");
-    return new Money(BigInt(integerPart) * MINOR_UNITS_PER_MAJOR + BigInt(fractionPart), Money.parseCurrency(props.currency));
+    return new Money(Money.parseMinorUnits(amount), Money.parseCurrency(props.currency));
+  }
+
+  /**
+   * Reconstruction from persistence or other trusted sources (numeric(20, 2)
+   * columns, computed differences): same strict format, sign allowed.
+   */
+  static rehydrate(props: MoneyProps): Money {
+    const amount: unknown = props?.amount;
+    if (typeof amount !== "string" || !SIGNED_AMOUNT_PATTERN.test(amount)) {
+      throw new InvalidMoneyError(`Invalid stored amount ${JSON.stringify(amount)}`);
+    }
+    return new Money(Money.parseMinorUnits(amount), Money.parseCurrency(props.currency));
   }
 
   static zero(currency: string): Money {
@@ -120,6 +133,14 @@ export class Money {
     const integerPart = absolute / MINOR_UNITS_PER_MAJOR;
     const fractionPart = (absolute % MINOR_UNITS_PER_MAJOR).toString().padStart(SCALE, "0");
     return `${sign}${integerPart}.${fractionPart}`;
+  }
+
+  /** Expects an amount already validated against one of the amount patterns. */
+  private static parseMinorUnits(amount: string): bigint {
+    const negative = amount.startsWith("-");
+    const [integerPart = "0", fractionPart = "0"] = (negative ? amount.slice(1) : amount).split(".");
+    const minorUnits = BigInt(integerPart) * MINOR_UNITS_PER_MAJOR + BigInt(fractionPart);
+    return negative ? -minorUnits : minorUnits;
   }
 
   private static ofMinorUnits(minorUnits: bigint, currency: string): Money {

@@ -54,23 +54,39 @@ Arquitetura hexagonal (ports & adapters), com DDD tático só onde ele paga o cu
 
 ```
 src/
-  shared/domain/      Money, DomainError, IntegrationEvent           ← TS puro
-  wallet/             Wallet, WalletLedgerEntry, OpenWallet, Reconcile...
-  wagering/           WagerTransaction, ProcessWagerTransaction, FailureCode...
-  messaging/          Inbox, Outbox, OutboxPublisher, SqsConsumer
-  platform/           config, database, logging, health, adapters de SQS
+  shared/
+    domain/           Money, DomainError, IntegrationEvent, backoff          ← TS puro
+    application/      portas (UnitOfWork, Clock, IdGenerator, WageringMetrics), erros, JSON canônico
+  wallet/
+    domain/           Wallet, WalletLedgerEntry, WalletBalanceChanged
+    application/      OpenWallet, WalletQueries (consulta, ledger paginado, reconciliação)
+    http/             WalletsController
+  wagering/
+    domain/           WagerTransaction, settleWagerTransaction, FailureCode, eventos
+    application/      ProcessWagerTransaction, WagerQueries, payloadHash, política de PENDING_REFERENCE
+    http/             WageringController
+  messaging/domain/   OutboxMessage (InboxMessage, publisher e consumer na próxima etapa)
+  persistence/        adapter MikroORM: records, mappers, repositórios, UnitOfWork, tradução de erros
+  platform/           config, database (ORM + migrations), logging, health, métricas, filtro HTTP, SQS
 ```
 
-Cada contexto se divide em `domain/` → `application/` → `infrastructure/`. A regra de dependência:
+Wallet e wagering formam **um único limite de consistência**: toda operação de aposta altera a wallet
+na mesma transação SQL. Os módulos organizam o código, mas compartilham o mesmo `UnitOfWork`. A regra
+de dependência:
 
 - **`domain/`** não importa NestJS, MikroORM nem o SDK da AWS. Construtores são `private`, com
   factories `create`/`open`/`from` (que validam) e `rehydrate` (que só reconstrói estado persistido).
-- **`application/`** contém os use cases e conhece apenas portas: `WalletRepository`, `UnitOfWork`,
-  `Outbox`, `Clock`, `IdGenerator`.
-- **`infrastructure/`** implementa as portas: repositórios MikroORM, controllers, consumer SQS.
+  As regras de negócio de cada operação ficam num serviço de domínio puro
+  (`settleWagerTransaction`), testado sem banco.
+- **`application/`** contém os use cases e conhece apenas portas. Usa a DI do NestJS (`@Injectable`),
+  mas nenhum tipo do ORM.
+- **`persistence/`** e **`*/http/`** implementam as portas e os adapters de entrada.
 
-Os modelos de persistência são separados do domínio, e os mappers chamam `rehydrate`. Assim, o ORM
-nunca hidrata objetos de domínio passando por cima das factories.
+Os modelos de persistência (`EntitySchema` sem decorators) são separados do domínio, e os mappers
+chamam `rehydrate`. Assim, o ORM nunca hidrata objetos de domínio passando por cima das factories. Cada
+execução de use case usa um `em.fork()` novo dentro de `em.transactional()`: identity map vazio, sem
+estado velho de tentativas ou requisições anteriores. As escritas são registradas no Unit of Work e vão
+juntas no flush do commit.
 
 ## 3. Stack
 
@@ -144,10 +160,12 @@ Complementos:
 BEGIN
   [SQS]  INSERT inbox (consumer_name, message_id) ON CONFLICT DO NOTHING
          → 0 linhas = mensagem já processada → COMMIT e ack
-  SELECT wallet ... FOR UPDATE                      ← serializa por wallet
-  SELECT wager_tx WHERE (provider_id, idempotency_key)
+  SELECT wager_tx WHERE (provider_id, idempotency_key)   ← caminho rápido, sem lock
          → existe com o mesmo payload_hash → replay: devolve o resultado original
          → existe com hash diferente       → 409 (conflito, não replay)
+  SELECT wallet ... FOR UPDATE                           ← serializa por wallet
+  SELECT wager_tx WHERE (provider_id, idempotency_key)   ← re-checagem sob o lock
+  SELECT wager_tx WHERE (provider_id, external_transaction_id) → existe com outra chave → 409
   resolve a referência (REFUND/ROLLBACK obrigatória, WIN opcional)
          → ausente ou ainda não terminal   → PENDING_REFERENCE
   o domínio decide: PROCESSED | REJECTED(failureCode)
@@ -155,14 +173,17 @@ BEGIN
   INSERT ledger entry                   ┘
   INSERT wager_tx (com snapshot balance_after)
   INSERT outbox (eventos)
-COMMIT  →  só então: resposta HTTP ou ack no SQS
+COMMIT  →  só então: resposta HTTP ou ack no SQS; métricas e logs também só depois do commit
 ```
 
-- **A idempotência é verificada depois do lock.** As 50 apostas idênticas esperam na fila do lock da
-  wallet: a primeira grava, as outras 49 encontram o registro e fazem replay.
+- **Caminho rápido antes do lock:** uma duplicata de transação já decidida é respondida sem entrar na
+  fila do lock da wallet. Resultados terminais são imutáveis, então lê-los sem lock é seguro.
+- **Re-checagem depois do lock:** as 50 apostas idênticas que chegam juntas esperam na fila do lock da
+  wallet. A primeira grava, as outras 49 encontram o registro e fazem replay.
 - **`UNIQUE (provider_id, idempotency_key)` cobre o caso restante:** a mesma chave apontando para
-  wallets diferentes, que pegam locks diferentes. A violação de unicidade dispara rollback, releitura e
-  comparação de hash, e o resultado é replay ou 409.
+  wallets diferentes, que pegam locks diferentes. O Unit of Work traduz a violação em
+  `UniqueConstraintConflict` com o nome do constraint, e o use case refaz a operação inteira (até 3
+  tentativas). Na nova tentativa ele encontra o vencedor, e o resultado é replay ou 409.
 - **Replay devolve o saldo observado na época,** gravado em `wager_transactions.balance_after`. Isso
   vale também para `LOSS` e `REJECTED`, que não têm lançamento no ledger.
 - **`Idempotency-Key` é obrigatório e é a fonte da verdade,** com escopo por `providerId`. Default
@@ -334,8 +355,14 @@ O mesmo mapeamento vale em todos os endpoints. O corpo sempre traz `status` e, s
 | Payload inválido | `400` |
 | Recurso inexistente | `404` |
 | Conflito de idempotência ou wallet duplicada | `409` |
-| Rejeição de negócio (inclusive em replay) | `422` |
+| Rejeição de negócio (inclusive em replay); também `FAILED` (terminal) | `422` |
 | Falha transitória (banco ou SQS fora, `lock_timeout`), com `Retry-After` | `503` |
+| Erro inesperado (bug) | `500` |
+
+O corpo de erro tem sempre o mesmo formato: `{ "error": "<CODE>", "message": "...", "issues"?: [...] }`.
+O código transitório vem da tradução de erros do banco: `55P03` (lock timeout), `40P01` (deadlock),
+`40001` (serialização), `57014` (statement timeout), classe `08` (conexão) e erros de rede viram 503.
+Lock timeouts e deadlocks também incrementam a métrica `wagering_lock_conflicts_total`.
 
 A regra que o provedor usa: `4xx` **não** se reenvia igual, `202` aguarda o evento, `503` reenvia com a
 mesma chave. Os endpoints `/health/live` e `/health/ready` são abertos. O ready responde 503 se o

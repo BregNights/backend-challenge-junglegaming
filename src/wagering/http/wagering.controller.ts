@@ -1,0 +1,79 @@
+import { Body, Controller, Get, Headers, Inject, Param, Post, Req, Res } from "@nestjs/common";
+import type { Request, Response } from "express";
+import { z } from "zod";
+import { identifierSchema, moneySchema, parseInput, uuidSchema } from "../../platform/http/validation";
+import { WagerTransactionStatus as Status, PROVIDER_KINDS } from "../domain/wager-transaction";
+import { ProcessWagerTransaction } from "../application/process-wager-transaction";
+import type { WagerTransactionResult, WagerTransactionView } from "../application/views";
+import { WagerQueries } from "../application/wager-queries";
+
+const submitSchema = z.object({
+  providerId: identifierSchema,
+  externalTransactionId: identifierSchema,
+  playerId: uuidSchema,
+  walletId: uuidSchema,
+  roundId: identifierSchema,
+  gameId: identifierSchema,
+  kind: z.enum(PROVIDER_KINDS, { error: `kind must be one of ${PROVIDER_KINDS.join(", ")} (OPENING is internal)` }),
+  money: moneySchema,
+  referenceExternalTransactionId: identifierSchema.optional(),
+});
+
+const idempotencyKeySchema = z
+  .string({ error: "Idempotency-Key header is required" })
+  .min(1)
+  .max(256)
+  .regex(/^[\x21-\x7E]+$/, "printable ASCII without spaces");
+
+/** Decided outcomes are distinguishable by status code alone. */
+const STATUS_CODE: Record<Status, number> = {
+  [Status.Processed]: 200,
+  [Status.PendingReference]: 202,
+  [Status.Pending]: 202,
+  [Status.Rejected]: 422,
+  [Status.Failed]: 422,
+};
+
+@Controller()
+export class WageringController {
+  constructor(
+    @Inject(ProcessWagerTransaction) private readonly processWagerTransaction: ProcessWagerTransaction,
+    @Inject(WagerQueries) private readonly queries: WagerQueries,
+  ) {}
+
+  @Post("wagering/transactions")
+  async submit(
+    @Body() body: unknown,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<WagerTransactionResult> {
+    const key = parseInput(idempotencyKeySchema, idempotencyKey, "Idempotency-Key header");
+    const input = parseInput(submitSchema, body, "request body");
+
+    const result = await this.processWagerTransaction.execute({
+      ...input,
+      idempotencyKey: key,
+      correlationId: String(request.id),
+      source: "http",
+    });
+    response.status(STATUS_CODE[result.status]);
+    return result;
+  }
+
+  @Get("wagering/transactions/:transactionId")
+  getById(@Param("transactionId") transactionId: string): Promise<WagerTransactionView> {
+    return this.queries.getById(parseInput(uuidSchema, transactionId, "transactionId"));
+  }
+
+  @Get("providers/:providerId/wagering/transactions/:externalTransactionId")
+  getByExternalId(
+    @Param("providerId") providerId: string,
+    @Param("externalTransactionId") externalTransactionId: string,
+  ): Promise<WagerTransactionView> {
+    return this.queries.getByExternalId(
+      parseInput(identifierSchema, providerId, "providerId"),
+      parseInput(identifierSchema, externalTransactionId, "externalTransactionId"),
+    );
+  }
+}

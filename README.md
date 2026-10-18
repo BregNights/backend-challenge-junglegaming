@@ -88,10 +88,18 @@ As variáveis de ambiente estão documentadas em [.env.example](.env.example).
       integração.
 - [x] `Money` com testes de unidade.
 - [x] Health checks: liveness e readiness (Postgres e SQS).
-- [ ] Domínio: `Wallet`, `WagerTransaction`, `WalletLedgerEntry`, eventos.
-- [ ] Use cases e API HTTP: wallets, transações, consultas, ledger paginado, reconciliação.
+- [x] Domínio: `Wallet`, `WalletLedgerEntry`, `WagerTransaction` (máquina de estados), regras de
+      `BET`/`WIN`/`LOSS`/`REFUND`/`ROLLBACK`, eventos de integração e `OutboxMessage`, com testes de unidade.
+- [x] Persistência MikroORM: `EntitySchema` sem decorators, mappers, Unit of Work por fork e tradução de
+      erros do banco.
+- [x] Use cases e API HTTP: criação de wallet, submissão de transação (lock pessimista, idempotência,
+      replay, conflito), consultas, ledger paginado por cursor e reconciliação.
+- [x] Métricas Prometheus em `/metrics`.
+- [x] Testes de integração da API e de concorrência: cenário 2 × 80, a mesma aposta 50 vezes em
+      paralelo, wallet disputada, wallets distintas e 3 processos independentes. Um teste de mutação
+      (removendo o lock da wallet) faz os 5 testes de concorrência falharem, o que confirma que eles
+      detectam corridas.
 - [ ] Consumer SQS com inbox, retry, DLQ e shutdown gracioso.
 - [ ] Outbox publisher e worker de `PENDING_REFERENCE`.
-- [ ] Métricas.
-- [ ] Testes de concorrência (50 apostas paralelas, ≥ 3 processos, crash entre commit e ack...).
+- [ ] Testes de crash entre commit e ack, de publishers concorrentes e de reinício.
 - [ ] Teste de carga (`bun run test:load`).

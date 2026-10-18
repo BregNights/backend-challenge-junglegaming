@@ -1,0 +1,84 @@
+import { type ArgumentsHost, Catch, type ExceptionFilter, HttpException, HttpStatus, Logger } from "@nestjs/common";
+import type { Request, Response } from "express";
+import {
+  IdempotencyConflictError,
+  TransactionNotFoundError,
+  TransientInfrastructureError,
+  ValidationError,
+  WalletAlreadyExistsError,
+  WalletNotFoundError,
+} from "../../shared/application/errors";
+import { InvalidMoneyError } from "../../shared/domain/money";
+import { InvalidWagerTransactionError } from "../../wagering/domain/wager-transaction";
+import { InvalidWalletOperationError } from "../../wallet/domain/wallet";
+
+interface ErrorResponse {
+  status: number;
+  body: { error: string; message: string; issues?: unknown };
+  headers?: Record<string, string>;
+}
+
+/** Retry hint for transient failures; providers resend with the same Idempotency-Key. */
+const RETRY_AFTER_SECONDS = "1";
+
+/**
+ * One mapping for every endpoint, so the status code alone tells a provider
+ * what to do: 400 fix the payload, 404 unknown resource, 409 idempotency
+ * conflict, 422 business rejection (returned by controllers, not thrown),
+ * 503 retry later with the same key.
+ */
+@Catch()
+export class HttpErrorFilter implements ExceptionFilter {
+  private readonly logger = new Logger(HttpErrorFilter.name);
+
+  catch(exception: unknown, host: ArgumentsHost): void {
+    const http = host.switchToHttp();
+    const response = http.getResponse<Response>();
+    const request = http.getRequest<Request>();
+    const { status, body, headers } = this.map(exception);
+
+    if (status >= 500) {
+      this.logger.error({ msg: "request failed", correlationId: request.id, error: describe(exception), status });
+    }
+    for (const [name, value] of Object.entries(headers ?? {})) response.setHeader(name, value);
+    response.status(status).json(body);
+  }
+
+  private map(exception: unknown): ErrorResponse {
+    if (exception instanceof ValidationError) {
+      return { status: 400, body: { error: exception.code, message: exception.message, issues: exception.issues } };
+    }
+    if (
+      exception instanceof InvalidMoneyError ||
+      exception instanceof InvalidWagerTransactionError ||
+      exception instanceof InvalidWalletOperationError
+    ) {
+      return { status: 400, body: { error: exception.code, message: exception.message } };
+    }
+    if (exception instanceof WalletNotFoundError || exception instanceof TransactionNotFoundError) {
+      return { status: 404, body: { error: exception.code, message: exception.message } };
+    }
+    if (exception instanceof IdempotencyConflictError || exception instanceof WalletAlreadyExistsError) {
+      return { status: 409, body: { error: exception.code, message: exception.message } };
+    }
+    if (exception instanceof TransientInfrastructureError) {
+      return {
+        status: 503,
+        body: { error: exception.code, message: "Temporarily unavailable, retry with the same Idempotency-Key" },
+        headers: { "Retry-After": RETRY_AFTER_SECONDS },
+      };
+    }
+    if (exception instanceof HttpException) {
+      const status = exception.getStatus();
+      return {
+        status,
+        body: { error: HttpStatus[status] ?? "HTTP_ERROR", message: exception.message },
+      };
+    }
+    return { status: 500, body: { error: "INTERNAL_ERROR", message: "Unexpected error" } };
+  }
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
