@@ -11,4 +11,10 @@ export interface WageringMetrics {
   /** Lock wait timeouts and deadlocks: contention signal on hot wallets. */
   lockConflict(reason: "lock-timeout" | "deadlock"): void;
   reconciliationChecked(consistent: boolean): void;
+  /** A message handed back to the queue after a transient failure. */
+  messageRetried(): void;
+  messageDeadLettered(reason: "invalid-message" | "permanent-error"): void;
+  outboxPublished(count: number): void;
+  outboxPublishFailed(count: number): void;
+  outboxBacklog(pending: number, oldestAgeSeconds: number): void;
 }

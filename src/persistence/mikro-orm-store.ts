@@ -1,9 +1,13 @@
 import { LockMode, QueryOrder } from "@mikro-orm/core";
 import type { EntityManager } from "@mikro-orm/postgresql";
-import type { OutboxMessage } from "../messaging/domain/outbox-message";
+import type { InboxMessage } from "../messaging/domain/inbox-message";
+import { OutboxMessage } from "../messaging/domain/outbox-message";
 import type {
+  InboxRegistration,
+  InboxRepository,
   LedgerRepository,
   LedgerSummary,
+  OutboxBacklog,
   OutboxRepository,
   TransactionalStore,
   WagerTransactionRepository,
@@ -38,12 +42,14 @@ export class MikroOrmStore implements TransactionalStore {
   readonly transactions: WagerTransactionRepository;
   readonly ledger: LedgerRepository;
   readonly outbox: OutboxRepository;
+  readonly inbox: InboxRepository;
 
   constructor(em: EntityManager) {
     this.wallets = new MikroOrmWalletRepository(em);
     this.transactions = new MikroOrmWagerTransactionRepository(em);
     this.ledger = new MikroOrmLedgerRepository(em);
     this.outbox = new MikroOrmOutboxRepository(em);
+    this.inbox = new MikroOrmInboxRepository(em);
   }
 }
 
@@ -124,6 +130,35 @@ class MikroOrmWagerTransactionRepository implements WagerTransactionRepository {
     this.em.persist(transactionToRecord(transaction, record));
   }
 
+  async claimDuePendingReferences(now: Date, leaseUntil: Date, limit: number): Promise<{ id: string; walletId: string }[]> {
+    const rows = await this.em.execute<{ id: string; wallet_id: string }[]>(
+      `update wager_transactions t
+          set next_attempt_at = ?
+         from (select id
+                 from wager_transactions
+                where status = 'PENDING_REFERENCE' and next_attempt_at <= ?
+                order by next_attempt_at
+                limit ?
+                  for update skip locked) due
+        where t.id = due.id
+    returning t.id, t.wallet_id`,
+      [leaseUntil, now, limit],
+    );
+    return rows.map((row) => ({ id: row.id, walletId: row.wallet_id }));
+  }
+
+  async expediteWaitingFor(providerId: string, externalTransactionId: string, now: Date): Promise<void> {
+    await this.em.execute(
+      `update wager_transactions
+          set next_attempt_at = ?
+        where status = 'PENDING_REFERENCE'
+          and provider_id = ?
+          and reference_external_transaction_id = ?
+          and next_attempt_at > ?`,
+      [now, providerId, externalTransactionId, now],
+    );
+  }
+
   private track(record: WagerTransactionRecord | null): WagerTransaction | undefined {
     if (!record) return undefined;
     this.loaded.set(record.id, record);
@@ -171,10 +206,93 @@ class MikroOrmLedgerRepository implements LedgerRepository {
   }
 }
 
+interface OutboxRow {
+  id: string;
+  aggregate_id: string;
+  message_group_id: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  occurred_at: Date | string;
+  attempts: number;
+  next_attempt_at: Date | string;
+  published_at: Date | string | null;
+  last_error: string | null;
+}
+
 class MikroOrmOutboxRepository implements OutboxRepository {
   constructor(private readonly em: EntityManager) {}
 
   add(message: OutboxMessage): void {
     this.em.persist(outboxToRecord(message, new OutboxMessageRecord()));
+  }
+
+  async claimDue(now: Date, limit: number): Promise<OutboxMessage[]> {
+    // Ordered by the identity column: assigned at insert, under the wallet lock, so
+    // it follows commit order per wallet even across instances with skewed clocks.
+    const rows = await this.em.execute<OutboxRow[]>(
+      `select id, aggregate_id, message_group_id, event_type, payload, occurred_at,
+              attempts, next_attempt_at, published_at, last_error
+         from outbox_messages
+        where published_at is null and next_attempt_at <= ?
+        order by sequence
+        limit ?
+          for update skip locked`,
+      [now, limit],
+    );
+    return rows.map((row) =>
+      OutboxMessage.rehydrate({
+        id: row.id,
+        aggregateId: row.aggregate_id,
+        messageGroupId: row.message_group_id,
+        eventType: row.event_type,
+        payload: row.payload,
+        occurredAt: new Date(row.occurred_at),
+        attempts: row.attempts,
+        nextAttemptAt: new Date(row.next_attempt_at),
+        publishedAt: row.published_at === null ? undefined : new Date(row.published_at),
+        lastError: row.last_error ?? undefined,
+      }),
+    );
+  }
+
+  async saveDeliveryState(message: OutboxMessage): Promise<void> {
+    await this.em.execute(
+      `update outbox_messages set attempts = ?, next_attempt_at = ?, published_at = ?, last_error = ? where id = ?`,
+      [message.attempts, message.nextAttemptAt, message.publishedAt ?? null, message.lastError ?? null, message.id],
+    );
+  }
+
+  async backlog(now: Date): Promise<OutboxBacklog> {
+    const [row] = await this.em.execute<{ pending: number; oldest_age_seconds: number | string | null }[]>(
+      `select count(*)::int as pending,
+              coalesce(extract(epoch from (?::timestamptz - min(occurred_at))), 0)::float8 as oldest_age_seconds
+         from outbox_messages
+        where published_at is null`,
+      [now],
+    );
+    return { pending: Number(row?.pending ?? 0), oldestAgeSeconds: Math.max(0, Number(row?.oldest_age_seconds ?? 0)) };
+  }
+}
+
+class MikroOrmInboxRepository implements InboxRepository {
+  constructor(private readonly em: EntityManager) {}
+
+  async register(message: InboxMessage): Promise<InboxRegistration> {
+    const inserted = await this.em.execute<{ message_id: string }[]>(
+      `insert into inbox_messages (consumer_name, message_id, payload_hash, received_at, processed_at)
+       values (?, ?, ?, ?, ?)
+       on conflict (consumer_name, message_id) do nothing
+       returning message_id`,
+      [message.consumerName, message.messageId, message.payloadHash, message.receivedAt, message.processedAt ?? null],
+    );
+    if (inserted.length > 0) return "new";
+
+    // A concurrent delivery of the same message blocked on the insert above until the
+    // first one committed; by now its row is visible.
+    const [existing] = await this.em.execute<{ payload_hash: string }[]>(
+      `select payload_hash from inbox_messages where consumer_name = ? and message_id = ?`,
+      [message.consumerName, message.messageId],
+    );
+    return existing?.payload_hash === message.payloadHash ? "duplicate" : "conflict";
   }
 }

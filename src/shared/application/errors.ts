@@ -54,6 +54,11 @@ export class IdempotencyConflictError extends ApplicationError {
   readonly code = "IDEMPOTENCY_CONFLICT";
 }
 
+/** Same transport message id with a different body: a producer bug, never retried. */
+export class InboxConflictError extends ApplicationError {
+  readonly code = "INBOX_CONFLICT";
+}
+
 /** Retryable infrastructure failure (database/broker unavailable, lock timeout): 503 / SQS retry. */
 export class TransientInfrastructureError extends ApplicationError {
   readonly code = "TEMPORARILY_UNAVAILABLE";

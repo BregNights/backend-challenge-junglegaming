@@ -18,7 +18,27 @@ export interface SqsConfig {
   readonly eventsQueueName: string;
   readonly maxReceiveCount: number;
   readonly visibilityTimeoutSeconds: number;
+  /** Long-polling wait of the consumer (20 s in production, shorter in tests). */
+  readonly receiveWaitSeconds: number;
+  /** Visibility backoff after a transient failure: base · 2^(receiveCount − 1), capped. */
+  readonly retryBaseSeconds: number;
+  readonly retryMaxSeconds: number;
 }
+
+export interface WorkersConfig {
+  /** How long shutdown waits for in-flight messages before handing them back to the queue. */
+  readonly shutdownGraceMs: number;
+  readonly outboxPollIntervalMs: number;
+  readonly outboxBatchSize: number;
+  readonly pendingReferencePollIntervalMs: number;
+  readonly pendingReferenceBatchSize: number;
+  readonly pendingReferenceTtlMs: number;
+  /** Test-only crash points, inert unless explicitly set. */
+  readonly faultInjection: FaultPoint | undefined;
+}
+
+export const FAULT_POINTS = ["crash-after-commit", "crash-after-publish"] as const;
+export type FaultPoint = (typeof FAULT_POINTS)[number];
 
 type Env = Record<string, string | undefined>;
 
@@ -41,6 +61,7 @@ export class AppConfig {
     readonly roles: ReadonlySet<AppRole>,
     readonly database: DatabaseConfig,
     readonly sqs: SqsConfig,
+    readonly workers: WorkersConfig,
   ) {}
 
   static fromEnv(env: Env = process.env): AppConfig {
@@ -66,6 +87,19 @@ export class AppConfig {
         eventsQueueName: reader.string("SQS_EVENTS_QUEUE", "wallet-events.fifo"),
         maxReceiveCount: reader.int("SQS_MAX_RECEIVE_COUNT", 5),
         visibilityTimeoutSeconds: reader.int("SQS_VISIBILITY_TIMEOUT_SECONDS", 30),
+        receiveWaitSeconds: reader.int("SQS_RECEIVE_WAIT_SECONDS", 20, { max: 20 }),
+        retryBaseSeconds: reader.int("SQS_RETRY_BASE_SECONDS", 2),
+        retryMaxSeconds: reader.int("SQS_RETRY_MAX_SECONDS", 300),
+      },
+      {
+        shutdownGraceMs: reader.int("SHUTDOWN_GRACE_MS", 10_000),
+        outboxPollIntervalMs: reader.int("OUTBOX_POLL_INTERVAL_MS", 500),
+        // SendMessageBatch accepts at most 10 entries.
+        outboxBatchSize: reader.int("OUTBOX_BATCH_SIZE", 10, { min: 1, max: 10 }),
+        pendingReferencePollIntervalMs: reader.int("PENDING_REFERENCE_POLL_INTERVAL_MS", 1_000),
+        pendingReferenceBatchSize: reader.int("PENDING_REFERENCE_BATCH_SIZE", 20),
+        pendingReferenceTtlMs: reader.int("PENDING_REFERENCE_TTL_MS", 30 * 60_000),
+        faultInjection: reader.oneOf("FAULT_INJECTION", FAULT_POINTS),
       },
     );
 
@@ -101,14 +135,19 @@ class EnvReader {
     return this.optional(name) ?? fallback;
   }
 
-  int(name: string, fallback: number): number {
+  int(name: string, fallback: number, range: { min?: number; max?: number } = {}): number {
     const raw = this.optional(name);
     if (raw === undefined) return fallback;
     if (!/^\d+$/.test(raw)) {
       this.problems.push(`${name} must be a non-negative integer, got "${raw}"`);
       return fallback;
     }
-    return Number(raw);
+    const value = Number(raw);
+    if ((range.min !== undefined && value < range.min) || (range.max !== undefined && value > range.max)) {
+      this.problems.push(`${name} must be between ${range.min ?? 0} and ${range.max ?? "∞"}, got ${value}`);
+      return fallback;
+    }
+    return value;
   }
 
   bool(name: string, fallback: boolean): boolean {
@@ -118,6 +157,14 @@ class EnvReader {
     if (raw === "false" || raw === "0") return false;
     this.problems.push(`${name} must be true or false, got "${raw}"`);
     return fallback;
+  }
+
+  oneOf<T extends string>(name: string, allowed: readonly T[]): T | undefined {
+    const raw = this.optional(name);
+    if (raw === undefined) return undefined;
+    if ((allowed as readonly string[]).includes(raw)) return raw as T;
+    this.problems.push(`${name} must be one of ${allowed.join(", ")}, got "${raw}"`);
+    return undefined;
   }
 
   roles(name: string): ReadonlySet<AppRole> {

@@ -1,7 +1,9 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
+import { InboxMessage } from "../../messaging/domain/inbox-message";
 import { OutboxMessage } from "../../messaging/domain/outbox-message";
 import {
   IdempotencyConflictError,
+  InboxConflictError,
   UniqueConstraintConflict,
   WalletNotFoundError,
 } from "../../shared/application/errors";
@@ -11,9 +13,9 @@ import { type TransactionalStore, UNIT_OF_WORK, type UnitOfWork } from "../../sh
 import { Money, type MoneyProps } from "../../shared/domain/money";
 import type { Wallet } from "../../wallet/domain/wallet";
 import { settleWagerTransaction } from "../domain/wager-settlement";
-import { type ProviderKind, WagerTransaction } from "../domain/wager-transaction";
+import { type ProviderKind, WagerTransaction, WagerTransactionStatus } from "../domain/wager-transaction";
 import { hashWagerPayload } from "./payload-hash";
-import { nextReferenceAttemptAt } from "./pending-reference-policy";
+import { PendingReferencePolicy } from "./pending-reference-policy";
 import { eventsForSettlement } from "./settlement-events";
 import type { WagerTransactionResult } from "./views";
 
@@ -33,6 +35,19 @@ export interface ProcessWagerTransactionCommand {
   source: ProcessingSource;
 }
 
+/** Transport message being consumed; recorded in the inbox inside the same SQL transaction. */
+export interface InboxContext {
+  consumerName: string;
+  messageId: string;
+  payloadHash: string;
+}
+
+export type MessageProcessingOutcome =
+  | { duplicateMessage: true }
+  | { duplicateMessage: false; result: WagerTransactionResult };
+
+type ProcessOutcome = { kind: "duplicate-message" } | { kind: "result"; result: WagerTransactionResult };
+
 /** Losing one of these races means a concurrent duplicate committed first. */
 const IDEMPOTENCY_CONSTRAINTS: ReadonlySet<string> = new Set(["wager_tx_idempotency_uq", "wager_tx_external_id_uq"]);
 const MAX_RACE_ATTEMPTS = 3;
@@ -40,9 +55,10 @@ const MAX_RACE_ATTEMPTS = 3;
 /**
  * The single entry point for provider operations, shared by HTTP and SQS.
  *
- * Inside one SQL transaction: dedupe by idempotency key → lock the wallet row →
- * re-check under the lock → settle → persist transaction, ledger entry, wallet
- * and outbox events together. Nothing is acknowledged before the commit.
+ * Inside one SQL transaction: [inbox] → dedupe by idempotency key → lock the
+ * wallet row → re-check under the lock → settle → persist transaction, ledger
+ * entry, wallet and outbox events together. Nothing is acknowledged before the
+ * commit.
  */
 @Injectable()
 export class ProcessWagerTransaction {
@@ -53,31 +69,46 @@ export class ProcessWagerTransaction {
     @Inject(CLOCK) private readonly clock: Clock,
     @Inject(ID_GENERATOR) private readonly ids: IdGenerator,
     @Inject(WAGERING_METRICS) private readonly metrics: WageringMetrics,
+    @Inject(PendingReferencePolicy) private readonly pendingReferences: PendingReferencePolicy,
   ) {}
 
+  /** HTTP entry point. */
   async execute(command: ProcessWagerTransactionCommand): Promise<WagerTransactionResult> {
+    const outcome = await this.run(command, undefined);
+    if (outcome.kind !== "result") throw new Error("Unreachable: duplicate message without an inbox");
+    return outcome.result;
+  }
+
+  /** SQS entry point: same use case, plus inbox deduplication by (consumerName, messageId). */
+  async executeFromMessage(command: ProcessWagerTransactionCommand, inbox: InboxContext): Promise<MessageProcessingOutcome> {
+    const outcome = await this.run(command, inbox);
+    return outcome.kind === "result" ? { duplicateMessage: false, result: outcome.result } : { duplicateMessage: true };
+  }
+
+  private async run(command: ProcessWagerTransactionCommand, inbox: InboxContext | undefined): Promise<ProcessOutcome> {
     const startedAt = performance.now();
-    let outcome = "error";
+    let label = "error";
     try {
       const money = Money.from(command.money);
       const payloadHash = hashWagerPayload({ ...command, money });
-      const result = await this.executeWithRaceRetry(command, money, payloadHash);
-      outcome = result.idempotentReplay ? "replay" : result.status;
-      this.record(command, result);
-      return result;
+      const outcome = await this.runWithRaceRetry(command, money, payloadHash, inbox);
+      label = outcome.kind === "duplicate-message" ? "duplicate-message" : outcome.result.idempotentReplay ? "replay" : outcome.result.status;
+      this.record(command, outcome);
+      return outcome;
     } finally {
-      this.metrics.processingObserved((performance.now() - startedAt) / 1_000, { source: command.source, outcome });
+      this.metrics.processingObserved((performance.now() - startedAt) / 1_000, { source: command.source, outcome: label });
     }
   }
 
-  private async executeWithRaceRetry(
+  private async runWithRaceRetry(
     command: ProcessWagerTransactionCommand,
     money: Money,
     payloadHash: string,
-  ): Promise<WagerTransactionResult> {
+    inbox: InboxContext | undefined,
+  ): Promise<ProcessOutcome> {
     for (let attempt = 1; ; attempt++) {
       try {
-        return await this.uow.run((store) => this.process(store, command, money, payloadHash));
+        return await this.uow.run((store) => this.process(store, command, money, payloadHash, inbox));
       } catch (error) {
         // Same key, different wallet lock: the unique constraint picked a winner.
         // The next attempt finds it and answers with a replay or a conflict.
@@ -94,17 +125,29 @@ export class ProcessWagerTransaction {
     command: ProcessWagerTransactionCommand,
     money: Money,
     payloadHash: string,
-  ): Promise<WagerTransactionResult> {
+    inbox: InboxContext | undefined,
+  ): Promise<ProcessOutcome> {
+    if (inbox) {
+      const now = this.clock.now();
+      const message = InboxMessage.receive({ ...inbox, receivedAt: now });
+      message.markProcessed(now);
+      const registration = await store.inbox.register(message);
+      if (registration === "duplicate") return { kind: "duplicate-message" };
+      if (registration === "conflict") {
+        throw new InboxConflictError(`Message ${inbox.messageId} was already consumed with a different body`);
+      }
+    }
+
     // Fast path: a decided duplicate is answered without queueing on the wallet lock.
     const duplicate = await store.transactions.findByIdempotencyKey(command.providerId, command.idempotencyKey);
-    if (duplicate) return this.replay(store, duplicate, payloadHash);
+    if (duplicate) return { kind: "result", result: await this.replay(store, duplicate, payloadHash) };
 
     const wallet = await store.wallets.lockById(command.walletId);
     if (!wallet) throw new WalletNotFoundError(command.walletId);
 
     // Re-check under the lock: a duplicate may have committed while we waited for it.
     const raced = await store.transactions.findByIdempotencyKey(command.providerId, command.idempotencyKey);
-    if (raced) return this.replay(store, raced, payloadHash, wallet);
+    if (raced) return { kind: "result", result: await this.replay(store, raced, payloadHash, wallet) };
 
     if (await store.transactions.findByExternalId(command.providerId, command.externalTransactionId)) {
       throw new IdempotencyConflictError(
@@ -145,7 +188,7 @@ export class ProcessWagerTransaction {
       referenceDeadlinePassed: false,
       ledgerEntryId: this.ids.next(),
       now,
-      nextAttemptAt: nextReferenceAttemptAt(transaction, now),
+      nextAttemptAt: this.pendingReferences.nextAttemptAt(transaction, now),
     });
 
     store.transactions.insert(transaction);
@@ -162,13 +205,20 @@ export class ProcessWagerTransaction {
     for (const event of eventsForSettlement(transaction, wallet, outcome, nextContext)) {
       store.outbox.add(OutboxMessage.enqueue(event));
     }
+    // Anything parked waiting for this transaction can be retried right away.
+    if (transaction.status === WagerTransactionStatus.Processed) {
+      await store.transactions.expediteWaitingFor(command.providerId, command.externalTransactionId, now);
+    }
 
     return {
-      transactionId: transaction.id,
-      status: transaction.status,
-      balance: wallet.balance.toJSON(),
-      ...(transaction.failureCode ? { failureCode: transaction.failureCode } : {}),
-      idempotentReplay: false,
+      kind: "result",
+      result: {
+        transactionId: transaction.id,
+        status: transaction.status,
+        balance: wallet.balance.toJSON(),
+        ...(transaction.failureCode ? { failureCode: transaction.failureCode } : {}),
+        idempotentReplay: false,
+      },
     };
   }
 
@@ -197,7 +247,13 @@ export class ProcessWagerTransaction {
   }
 
   /** Metrics and logs only after commit, so they never describe a rolled-back decision. */
-  private record(command: ProcessWagerTransactionCommand, result: WagerTransactionResult): void {
+  private record(command: ProcessWagerTransactionCommand, outcome: ProcessOutcome): void {
+    if (outcome.kind === "duplicate-message") {
+      this.metrics.duplicateDetected("inbox");
+      this.logger.log({ msg: "duplicate message ignored", messageId: command.causationId, providerId: command.providerId });
+      return;
+    }
+    const { result } = outcome;
     if (result.idempotentReplay) {
       this.metrics.duplicateDetected("idempotency-replay");
     } else {
@@ -206,6 +262,7 @@ export class ProcessWagerTransaction {
     this.logger.log({
       msg: result.idempotentReplay ? "wager transaction replayed" : "wager transaction decided",
       correlationId: command.correlationId,
+      ...(command.source === "sqs" ? { messageId: command.causationId } : {}),
       transactionId: result.transactionId,
       walletId: command.walletId,
       providerId: command.providerId,

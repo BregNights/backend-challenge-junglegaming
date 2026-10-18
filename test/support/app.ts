@@ -10,14 +10,29 @@ export interface TestApp {
   close(): Promise<void>;
 }
 
+/**
+ * Environment for an application instance under test. Only the API role runs
+ * unless a test asks for workers, so no instance ever polls queues it does not own.
+ */
+export function testEnvironment(overrides: Record<string, string> = {}): Record<string, string> {
+  return {
+    DATABASE_URL: TEST_DATABASE_URL,
+    DATABASE_POOL_MAX: "20",
+    LOG_LEVEL: process.env.TEST_LOG_LEVEL ?? "silent",
+    APP_ROLES: "api",
+    AWS_REGION: "us-east-1",
+    AWS_ENDPOINT_URL: process.env.AWS_ENDPOINT_URL ?? "http://localhost:4566",
+    AWS_ACCESS_KEY_ID: "test",
+    AWS_SECRET_ACCESS_KEY: "test",
+    ...overrides,
+  };
+}
+
 /** Boots the real application (all modules, real Postgres) on a random port. */
-export async function startTestApp(): Promise<TestApp> {
-  process.env.DATABASE_URL = TEST_DATABASE_URL;
-  process.env.LOG_LEVEL = process.env.TEST_LOG_LEVEL ?? "silent";
-  process.env.AWS_ENDPOINT_URL ??= "http://localhost:4566";
-  process.env.AWS_ACCESS_KEY_ID ??= "test";
-  process.env.AWS_SECRET_ACCESS_KEY ??= "test";
-  process.env.DATABASE_POOL_MAX ??= "20";
+export async function startTestApp(overrides: Record<string, string> = {}): Promise<TestApp> {
+  Object.assign(process.env, testEnvironment(overrides));
+  // Variables a previous test file may have set must not leak into this instance.
+  for (const name of ["FAULT_INJECTION"]) if (!(name in overrides)) delete process.env[name];
 
   const app = await NestFactory.create(AppModule, { logger: false });
   await app.listen(0, "127.0.0.1");

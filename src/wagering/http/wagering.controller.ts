@@ -1,29 +1,11 @@
 import { Body, Controller, Get, Headers, Inject, Param, Post, Req, Res } from "@nestjs/common";
 import type { Request, Response } from "express";
-import { z } from "zod";
-import { identifierSchema, moneySchema, parseInput, uuidSchema } from "../../platform/http/validation";
-import { WagerTransactionStatus as Status, PROVIDER_KINDS } from "../domain/wager-transaction";
+import { identifierSchema, parseInput, uuidSchema } from "../../platform/http/validation";
 import { ProcessWagerTransaction } from "../application/process-wager-transaction";
 import type { WagerTransactionResult, WagerTransactionView } from "../application/views";
 import { WagerQueries } from "../application/wager-queries";
-
-const submitSchema = z.object({
-  providerId: identifierSchema,
-  externalTransactionId: identifierSchema,
-  playerId: uuidSchema,
-  walletId: uuidSchema,
-  roundId: identifierSchema,
-  gameId: identifierSchema,
-  kind: z.enum(PROVIDER_KINDS, { error: `kind must be one of ${PROVIDER_KINDS.join(", ")} (OPENING is internal)` }),
-  money: moneySchema,
-  referenceExternalTransactionId: identifierSchema.optional(),
-});
-
-const idempotencyKeySchema = z
-  .string({ error: "Idempotency-Key header is required" })
-  .min(1)
-  .max(256)
-  .regex(/^[\x21-\x7E]+$/, "printable ASCII without spaces");
+import { WagerTransactionStatus as Status } from "../domain/wager-transaction";
+import { idempotencyKeySchema, wagerRequestSchema } from "../wager-request.schema";
 
 /** Decided outcomes are distinguishable by status code alone. */
 const STATUS_CODE: Record<Status, number> = {
@@ -49,7 +31,7 @@ export class WageringController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<WagerTransactionResult> {
     const key = parseInput(idempotencyKeySchema, idempotencyKey, "Idempotency-Key header");
-    const input = parseInput(submitSchema, body, "request body");
+    const input = parseInput(wagerRequestSchema, body, "request body");
 
     const result = await this.processWagerTransaction.execute({
       ...input,

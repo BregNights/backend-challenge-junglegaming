@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { Counter, collectDefaultMetrics, Histogram, Registry } from "prom-client";
+import { Counter, collectDefaultMetrics, Gauge, Histogram, Registry } from "prom-client";
 import type { DuplicateKind, ProcessingSource, WageringMetrics } from "../../shared/application/metrics";
 
 @Injectable()
@@ -42,8 +42,61 @@ export class PrometheusMetrics implements WageringMetrics {
     registers: [this.registry],
   });
 
+  private readonly retries = new Counter({
+    name: "wagering_messages_retried_total",
+    help: "SQS messages handed back to the queue after a transient failure",
+    registers: [this.registry],
+  });
+
+  private readonly deadLetters = new Counter({
+    name: "wagering_messages_dead_lettered_total",
+    help: "SQS messages sent to the DLQ by the consumer (redrive by maxReceiveCount is counted by SQS)",
+    labelNames: ["reason"],
+    registers: [this.registry],
+  });
+
+  private readonly outboxDeliveries = new Counter({
+    name: "wagering_outbox_deliveries_total",
+    help: "Outbox publication attempts, by result",
+    labelNames: ["result"],
+    registers: [this.registry],
+  });
+
+  private readonly outboxPending = new Gauge({
+    name: "wagering_outbox_pending",
+    help: "Unpublished outbox events",
+    registers: [this.registry],
+  });
+
+  private readonly outboxLag = new Gauge({
+    name: "wagering_outbox_lag_seconds",
+    help: "Age of the oldest unpublished outbox event",
+    registers: [this.registry],
+  });
+
   constructor() {
     collectDefaultMetrics({ register: this.registry });
+  }
+
+  messageRetried(): void {
+    this.retries.inc();
+  }
+
+  messageDeadLettered(reason: "invalid-message" | "permanent-error"): void {
+    this.deadLetters.inc({ reason });
+  }
+
+  outboxPublished(count: number): void {
+    this.outboxDeliveries.inc({ result: "published" }, count);
+  }
+
+  outboxPublishFailed(count: number): void {
+    this.outboxDeliveries.inc({ result: "failed" }, count);
+  }
+
+  outboxBacklog(pending: number, oldestAgeSeconds: number): void {
+    this.outboxPending.set(pending);
+    this.outboxLag.set(oldestAgeSeconds);
   }
 
   transactionDecided(labels: { kind: string; status: string; source: ProcessingSource }): void {

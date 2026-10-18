@@ -99,7 +99,40 @@ As variáveis de ambiente estão documentadas em [.env.example](.env.example).
       paralelo, wallet disputada, wallets distintas e 3 processos independentes. Um teste de mutação
       (removendo o lock da wallet) faz os 5 testes de concorrência falharem, o que confirma que eles
       detectam corridas.
-- [ ] Consumer SQS com inbox, retry, DLQ e shutdown gracioso.
-- [ ] Outbox publisher e worker de `PENDING_REFERENCE`.
-- [ ] Testes de crash entre commit e ack, de publishers concorrentes e de reinício.
+- [x] Consumer SQS com inbox, retry com backoff, DLQ (explícita e por redrive) e shutdown gracioso.
+- [x] Outbox publisher (vários publishers com `SKIP LOCKED`) e worker de `PENDING_REFERENCE` com lease e
+      TTL.
+- [x] Testes de crash entre commit e ack, crash entre publicar e commitar, publishers concorrentes,
+      workers concorrentes e reinício.
 - [ ] Teste de carga (`bun run test:load`).
+
+## Cobertura dos testes obrigatórios
+
+Os testes de integração usam PostgreSQL e MiniStack reais. Cada suíte de mensageria cria filas
+exclusivas, e toda suíte termina verificando `wallet.balance == saldo reconstruído pelo ledger` para
+todas as wallets.
+
+| Exigência do enunciado | Onde |
+|---|---|
+| `Money`: escala, arredondamento, entradas inválidas, conflito de moeda | [money.spec.ts](src/shared/domain/money.spec.ts) |
+| Invariantes da `Wallet` e regras de `BET`/`WIN`/`LOSS`/`REFUND`/`ROLLBACK` | [wallet.spec.ts](src/wallet/domain/wallet.spec.ts), [wager-settlement.spec.ts](src/wagering/domain/wager-settlement.spec.ts), [wager-transaction.spec.ts](src/wagering/domain/wager-transaction.spec.ts) |
+| Idempotency key com payload divergente | [payload-hash.spec.ts](src/wagering/application/payload-hash.spec.ts), [wagering-api.test.ts](test/integration/wagering-api.test.ts) |
+| Migrations e constraints | [schema.test.ts](test/integration/schema.test.ts) |
+| Atomicidade entre wallet, ledger, inbox e outbox | [schema.test.ts](test/integration/schema.test.ts) (triggers diferidos), [sqs-consumer.test.ts](test/integration/sqs-consumer.test.ts) (crash) |
+| Inbox e redelivery | [sqs-consumer.test.ts](test/integration/sqs-consumer.test.ts) |
+| Publishers concorrentes sobre a mesma outbox | [outbox.test.ts](test/integration/outbox.test.ts) |
+| Retry e DLQ | [sqs-consumer.test.ts](test/integration/sqs-consumer.test.ts) |
+| Recuperação após reinicialização | [sqs-consumer.test.ts](test/integration/sqs-consumer.test.ts), [outbox.test.ts](test/integration/outbox.test.ts) |
+| 1. A mesma aposta 50 vezes em paralelo | [concurrency.test.ts](test/integration/concurrency.test.ts) |
+| 2. Operações concorrentes no mesmo saldo (2 × 80) | [concurrency.test.ts](test/integration/concurrency.test.ts) |
+| 3. Wallets distintas em paralelo | [concurrency.test.ts](test/integration/concurrency.test.ts) |
+| 4. ≥ 3 processos simultâneos | [concurrency.test.ts](test/integration/concurrency.test.ts) |
+| 5. Worker morto depois do commit e antes do ack | [sqs-consumer.test.ts](test/integration/sqs-consumer.test.ts) |
+| 6. Dois publishers sobre a mesma outbox | [outbox.test.ts](test/integration/outbox.test.ts) |
+| 7. `ROLLBACK`/`REFUND` antes da referência | [pending-references.test.ts](test/integration/pending-references.test.ts), [wagering-api.test.ts](test/integration/wagering-api.test.ts) |
+| 8. Reinício com consistência final comprovada | [sqs-consumer.test.ts](test/integration/sqs-consumer.test.ts) |
+
+**Testes de mutação.** Rodamos três mutantes e cada um fez os testes correspondentes falharem:
+- remover o lock da wallet derruba os 5 testes de concorrência;
+- deixar de devolver as mensagens no shutdown derruba o teste de reinício;
+- trocar a regex de uma asserção de schema derruba o teste dela.

@@ -63,9 +63,14 @@ src/
     http/             WalletsController
   wagering/
     domain/           WagerTransaction, settleWagerTransaction, FailureCode, eventos
-    application/      ProcessWagerTransaction, WagerQueries, payloadHash, política de PENDING_REFERENCE
+    application/      ProcessWagerTransaction, ResolvePendingReference, WagerQueries, payloadHash
     http/             WageringController
-  messaging/domain/   OutboxMessage (InboxMessage, publisher e consumer na próxima etapa)
+    sqs/              WagerTransactionConsumer (adapter de entrada, mesmo use case da API)
+    workers/          PendingReferenceWorker
+  messaging/
+    domain/           InboxMessage, OutboxMessage
+    application/      OutboxPublisher + porta EventPublisher
+    workers/          OutboxPublisherWorker
   persistence/        adapter MikroORM: records, mappers, repositórios, UnitOfWork, tradução de erros
   platform/           config, database (ORM + migrations), logging, health, métricas, filtro HTTP, SQS
 ```
@@ -275,25 +280,42 @@ os adapters mapeiem cada violação para uma resposta precisa.
 
 ### Consumer SQS (`wager-transactions.fifo`)
 
-- **Long polling** (20 s). O produtor usa `MessageGroupId = walletId`, o que dá ordem por wallet como
-  otimização.
-- **O mesmo use case da API,** com o registro da inbox dentro da mesma transação.
+Implementação: [`WagerTransactionConsumer`](src/wagering/sqs/wager-transaction.consumer.ts).
+
+- **Long polling** (20 s). O produtor usa `MessageGroupId = walletId`. Num lote, as mensagens de um
+  mesmo grupo (wallet) são processadas em ordem, e grupos diferentes em paralelo.
+- **O mesmo use case da API** (`ProcessWagerTransaction.executeFromMessage`). O registro na inbox,
+  `(consumer_name, message_id)` com `INSERT … ON CONFLICT DO NOTHING`, é o primeiro comando da mesma
+  transação SQL. Se duas entregas da mesma mensagem chegam juntas, a segunda espera no índice único e
+  vê o registro da primeira depois do commit dela.
+- **Duas camadas de deduplicação:**
+  - a inbox absorve redeliveries (mesmo `messageId`);
+  - a idempotency key absorve mensagens diferentes com a mesma operação.
+
+  O mesmo `messageId` com outro corpo é `INBOX_CONFLICT` e vai para a DLQ.
 - **Ack (`DeleteMessage`) só depois do commit.** Se o processo morrer entre o commit e o ack, a mensagem
-  volta, a inbox a reconhece e ela recebe ack sem efeito.
+  volta depois do visibility timeout, a inbox a reconhece e ela recebe ack sem efeito. Se o próprio ack
+  falhar, vale o mesmo raciocínio.
 - **Classificação de erros:**
 
 | Erro | Exemplos | Ação |
 |---|---|---|
 | Negócio | saldo insuficiente, referência inválida | Persistido como `REJECTED`, evento na outbox, **ack** |
-| Transitório | banco fora, `lock_timeout`, deadlock, falha de serialização | Sem ack; `ChangeMessageVisibility` com backoff exponencial pelo `ApproximateReceiveCount` |
-| Permanente | JSON inválido, schema inválido, `kind: OPENING`, tipo desconhecido | Envio explícito para a DLQ, depois ack |
+| Transitório | banco fora, `lock_timeout`, deadlock, falha de serialização, erro inesperado | Sem ack; `ChangeMessageVisibility(min(base · 2^(n−1), máx))`, com `n` = `ApproximateReceiveCount` |
+| Permanente | JSON ou envelope inválido, `kind: OPENING`, wallet inexistente, conflito de idempotência ou de inbox | Enviado explicitamente para a DLQ (com `failureReason`), depois ack |
 
-- **Redrive policy** (`maxReceiveCount = 5`): a DLQ recebe os transitórios que nunca se resolvem.
+- **Redrive policy** (`maxReceiveCount = 5`): a DLQ recebe os transitórios que nunca se resolvem. Se o
+  envio para a DLQ falhar, a mensagem fica na fila (retry), nunca é perdida.
 - **FIFO bloqueia por grupo:** uma mensagem em retry segura as próximas da mesma wallet. Isso é
-  aceitável, e até desejável para a ordem, mas significa que uma mensagem envenenada atrasa a wallet
-  até chegar à DLQ.
-- **SIGTERM:** para o polling, espera as mensagens em andamento até um prazo e devolve as restantes com
-  `ChangeMessageVisibility(0)`. O Nest dispara os shutdown hooks (`enableShutdownHooks`).
+  aceitável, e até desejável para a ordem, mas significa que uma mensagem com problema transitório
+  atrasa a wallet até se resolver ou chegar à DLQ.
+- **SIGTERM** (via `enableShutdownHooks`, no hook `beforeApplicationShutdown`, antes de o pool do banco
+  fechar):
+  1. aborta o long polling;
+  2. deixa terminar, até `SHUTDOWN_GRACE_MS`, as mensagens que já começaram;
+  3. devolve imediatamente, com `ChangeMessageVisibility(0)`, as recebidas e não liquidadas.
+
+  O teste de reinício usa visibility timeout de 30 s justamente para provar essa devolução.
 
 ### Transactional Outbox
 
@@ -306,18 +328,42 @@ os adapters mapeiem cada violação para uma resposta precisa.
 - **Duplicatas são possíveis** (a instância publica e morre antes do commit). O destino usa
   `MessageDeduplicationId = eventId`, e o consumidor deduplica por `eventId`.
 - **Destino:** `wallet-events.fifo`, com `MessageGroupId = walletId` (coluna `message_group_id`).
+- **Falha do broker:** a transação não é desfeita. As mensagens recebem `scheduleRetry` (backoff de 1 s
+  a 5 min), e a tentativa e o erro ficam registrados.
+- **Lag:** a cada ciclo, o publisher atualiza `wagering_outbox_pending` e
+  `wagering_outbox_lag_seconds` (idade do evento pendente mais antigo).
+- **Limitação de ordem:** com vários publishers, dois lotes da mesma wallet podem ser publicados fora
+  de ordem (o lote 2 sai antes do lote 1). Os consumidores de eventos devem usar `walletVersion`
+  (`WalletBalanceChanged`) e `occurredAt` para ordenar. A ordem do FIFO é uma otimização, não uma
+  garantia.
 
 ### Referências fora de ordem
 
 - **Referência ausente**, ou existente mas ainda não terminal: a transação é gravada como
-  `PENDING_REFERENCE` e o evento `WagerTransactionPendingReference` é emitido.
-- **O worker reclama vencidas** com `SKIP LOCKED` e reprocessa pelo mesmo use case.
-- **Backoff:** `min(2^attempts s, 5 min)`.
-- **TTL de 30 min** (configurável): provedores costumam reenviar a referência em segundos ou minutos, e
-  um TTL longo deixa a operação em limbo.
-- **Ao esgotar o TTL:** `REJECTED` com `REFERENCE_NOT_FOUND`, mais o evento `WagerTransactionRejected`.
+  `PENDING_REFERENCE` e o evento `WagerTransactionPendingReference` é emitido (só na primeira vez).
+- **Claim com lease:** o worker ([`PendingReferenceWorker`](src/wagering/workers/pending-reference.worker.ts))
+  reclama as vencidas com `UPDATE … FROM (SELECT … FOR UPDATE SKIP LOCKED) … RETURNING`, empurrando
+  `next_attempt_at` 30 s à frente. Workers concorrentes pegam conjuntos disjuntos, e o claim de um
+  worker que morreu expira sozinho.
+- **Resolução** ([`ResolvePendingReference`](src/wagering/application/resolve-pending-reference.ts)):
+  segue a mesma ordem de lock (wallet primeiro) e as mesmas regras. Ao pegar o lock, confere que a
+  transação continua `PENDING_REFERENCE`; se outra instância já decidiu, pula.
+- **Backoff:** `min(2^(attempts − 1) s, 5 min)`.
+- **TTL de 30 min** (`PENDING_REFERENCE_TTL_MS`): provedores costumam reenviar a referência em
+  segundos ou minutos, e um TTL longo deixa a operação em limbo.
+- **Ao esgotar o TTL:**
+  - referência ausente: `REJECTED` com `REFERENCE_NOT_FOUND`, mais o evento `WagerTransactionRejected`;
+  - referência que existe mas nunca terminou: `REFERENCE_NOT_PROCESSED`.
 - **Otimização:** quando uma transação é processada, as pendentes que a referenciam têm o
-  `next_attempt_at` antecipado.
+  `next_attempt_at` antecipado na mesma transação. Cadeias como ROLLBACK de um REFUND de uma BET
+  atrasada se resolvem um elo de cada vez.
+
+### Pontos de falha injetáveis (somente testes)
+
+`FAULT_INJECTION=crash-after-commit` mata o processo (`SIGKILL`) entre o commit e o ack do consumer.
+`crash-after-publish` mata o processo entre o `SendMessageBatch` e o commit da outbox. Os testes de
+integração sobem processos reais com essas variáveis para provar a recuperação. Sem a variável, o
+código não faz nada.
 
 ## 9. Códigos de falha
 
@@ -388,14 +434,20 @@ vai sempre como `MoneyProps` (string), nunca como instância.
   `providerId` quando conhecidos. Corpos de request e response nunca são logados, e
   `authorization`/`idempotency-key` são redigidos. Os health checks ficam fora do log de acesso.
 - **Métricas (Prometheus, `/metrics`):**
-  - transações por status;
-  - duplicatas detectadas (replay e inbox);
-  - retries;
-  - mensagens enviadas para a DLQ;
-  - conflitos e timeouts de lock;
-  - outbox lag (idade do evento pendente mais antigo);
-  - latência de processamento (histograma);
-  - divergências de reconciliação.
+
+| Métrica | O que mede |
+|---|---|
+| `wagering_transactions_total{kind,status,source}` | Transações decididas, por status |
+| `wagering_duplicates_detected_total{kind}` | Duplicatas absorvidas: `idempotency-replay` e `inbox` |
+| `wagering_messages_retried_total` | Mensagens devolvidas à fila por falha transitória |
+| `wagering_messages_dead_lettered_total{reason}` | Mensagens enviadas pelo consumer à DLQ (o redrive por `maxReceiveCount` aparece nas métricas da própria fila) |
+| `wagering_lock_conflicts_total{reason}` | Lock timeouts e deadlocks |
+| `wagering_outbox_pending`, `wagering_outbox_lag_seconds` | Backlog e lag da outbox |
+| `wagering_outbox_deliveries_total{result}` | Publicações bem-sucedidas e falhas |
+| `wagering_processing_duration_seconds{source,outcome}` | Latência de processamento (histograma) |
+| `wagering_reconciliations_total{result}` | Reconciliações consistentes e divergentes |
+
+Também ficam expostas as métricas padrão do processo.
 - **Health:** liveness não depende de nada externo; readiness checa Postgres (`select 1` real) e SQS.
 
 ## 13. Autenticação

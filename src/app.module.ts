@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { APP_FILTER } from "@nestjs/core";
+import { MessagingModule } from "./messaging/messaging.module";
 import { PersistenceModule } from "./persistence/persistence.module";
 import { ConfigModule } from "./platform/config/config.module";
 import { CoreModule } from "./platform/core.module";
@@ -24,6 +25,7 @@ import { WalletModule } from "./wallet/wallet.module";
     HealthModule,
     WalletModule,
     WageringModule,
+    MessagingModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: HttpErrorFilter }],
 })
