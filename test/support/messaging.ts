@@ -21,11 +21,11 @@ export function testSqsClient(): SQSClient {
 
 export interface TestQueues {
   urls: QueueUrls;
-  /** Environment variables pointing an app instance at these queues. */
+  /** Variáveis de ambiente que apontam uma instância da aplicação para estas filas. */
   env: Record<string, string>;
 }
 
-/** Queues private to one test suite, so no other instance (or suite) can steal messages. */
+/** Filas exclusivas de uma suíte de testes, para que nenhuma outra instância (ou suíte) roube mensagens. */
 export async function createTestQueues(
   sqs: SQSClient,
   options: { visibilityTimeoutSeconds?: number; maxReceiveCount?: number } = {},
@@ -85,8 +85,8 @@ export function wagerEnvelope(wallet: TestWallet, data: { kind: string; amount: 
 }
 
 /**
- * Sends a raw body. The deduplication id is random by default so tests can
- * deliver the same body twice, as a redelivery would.
+ * Envia um corpo cru. O deduplication id é aleatório por padrão, para que os testes
+ * possam entregar o mesmo corpo duas vezes, como uma redelivery faria.
  */
 export async function sendRaw(sqs: SQSClient, queueUrl: string, body: string, groupId: string): Promise<void> {
   await sqs.send(
@@ -98,7 +98,7 @@ export async function sendEnvelope(sqs: SQSClient, queueUrl: string, envelope: R
   await sendRaw(sqs, queueUrl, JSON.stringify(envelope), envelope.data.walletId);
 }
 
-/** Receives (and deletes) everything currently available in a queue. */
+/** Recebe (e apaga) tudo o que estiver disponível numa fila. */
 export async function drainQueue(sqs: SQSClient, queueUrl: string, idleRounds = 2): Promise<Message[]> {
   const received: Message[] = [];
   let idle = 0;
@@ -124,7 +124,7 @@ export async function drainQueue(sqs: SQSClient, queueUrl: string, idleRounds = 
   return received;
 }
 
-/** Visible + in flight + delayed messages of a queue. */
+/** Mensagens visíveis + em andamento + atrasadas de uma fila. */
 export async function queueDepth(sqs: SQSClient, queueUrl: string): Promise<number> {
   const { Attributes = {} } = await sqs.send(
     new GetQueueAttributesCommand({

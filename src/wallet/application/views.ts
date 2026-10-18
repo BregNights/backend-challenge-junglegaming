@@ -23,7 +23,7 @@ export interface LedgerEntryView {
 
 export interface LedgerPage {
   items: LedgerEntryView[];
-  /** Opaque; null when there are no older entries. */
+  /** Opaco; null quando não há lançamentos mais antigos. */
   nextCursor: string | null;
 }
 

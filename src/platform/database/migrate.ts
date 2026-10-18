@@ -3,12 +3,12 @@ import { AppConfig } from "../config/app-config";
 import { buildOrmConfig } from "./mikro-orm.config";
 
 /**
- * Migration runner, used instead of the MikroORM CLI (which depends on
- * ts-node/tsx detection) so migrations run with plain `bun run`.
+ * Runner de migrations, usado no lugar da CLI do MikroORM (que depende de detectar
+ * ts-node/tsx) para que as migrations rodem com um simples `bun run`.
  *
- *   bun run src/platform/database/migrate.ts up     # apply all pending
- *   bun run src/platform/database/migrate.ts down   # revert the last one
- *   bun run src/platform/database/migrate.ts list   # executed + pending
+ *   bun run src/platform/database/migrate.ts up     # aplica todas as pendentes
+ *   bun run src/platform/database/migrate.ts down   # reverte a última
+ *   bun run src/platform/database/migrate.ts list   # executadas + pendentes
  */
 const command = process.argv[2] ?? "up";
 const orm = await MikroORM.init(buildOrmConfig(AppConfig.fromEnv().database));

@@ -12,7 +12,7 @@ interface DependencyCheck {
   error?: string;
 }
 
-/** Health endpoints are intentionally unauthenticated (see ARCHITECTURE.md). */
+/** Os endpoints de health são sem autenticação de propósito (ver ARCHITECTURE.md). */
 @Public()
 @Controller("health")
 export class HealthController {
@@ -22,13 +22,13 @@ export class HealthController {
     @Inject(AppConfig) private readonly config: AppConfig,
   ) {}
 
-  /** The process is alive and serving requests; dependencies are not checked. */
+  /** O processo está vivo e atendendo; as dependências não são verificadas. */
   @Get("live")
   live(): { status: "ok" } {
     return { status: "ok" };
   }
 
-  /** PostgreSQL and SQS are reachable; 503 tells the orchestrator to stop routing traffic. */
+  /** PostgreSQL e SQS estão acessíveis; 503 diz ao orquestrador para parar de rotear tráfego. */
   @Get("ready")
   async ready(@Res({ passthrough: true }) response: Response) {
     const [database, sqs] = await Promise.all([this.checkDatabase(), this.checkSqs()]);
@@ -37,7 +37,7 @@ export class HealthController {
     return { status: ready ? "ok" : "unavailable", checks: { database, sqs } };
   }
 
-  /** A real round-trip: connections are lazy, so checkConnection() alone says nothing before first use. */
+  /** Uma ida e volta real: as conexões são preguiçosas, então checkConnection() sozinho não diz nada antes do primeiro uso. */
   private async checkDatabase(): Promise<DependencyCheck> {
     try {
       await withTimeout(this.orm.em.getConnection().execute("select 1"), CHECK_TIMEOUT_MS);

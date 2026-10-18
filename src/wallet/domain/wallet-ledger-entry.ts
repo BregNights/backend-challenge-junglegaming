@@ -6,7 +6,7 @@ export interface CreateLedgerEntryProps {
   id: string;
   walletId: string;
   transactionId: string;
-  /** Wallet version produced by this entry; unique per wallet and used as the ledger cursor. */
+  /** Versão da wallet produzida por este lançamento; única por wallet e usada como cursor do ledger. */
   walletVersion: number;
   direction: LedgerDirection;
   money: Money;
@@ -22,8 +22,8 @@ export class InvalidLedgerEntryError extends DomainError {
 }
 
 /**
- * Immutable by structure: no mutable fields and no transition methods. Entries
- * are only ever produced by `Wallet` when its balance changes.
+ * Imutável por estrutura: sem campos mutáveis e sem métodos de transição.
+ * Lançamentos só são produzidos pela `Wallet`, quando o saldo dela muda.
  */
 export class WalletLedgerEntry {
   private constructor(
@@ -60,7 +60,7 @@ export class WalletLedgerEntry {
     return entry;
   }
 
-  /** Reconstruction from persistence; does not re-validate. */
+  /** Reconstrução a partir da persistência; não revalida. */
   static rehydrate(state: LedgerEntryState): WalletLedgerEntry {
     return new WalletLedgerEntry(
       state.id,

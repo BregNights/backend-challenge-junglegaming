@@ -9,7 +9,7 @@ import {
   WagerTransactionStatus,
 } from "./wager-transaction";
 
-/** Kinds each operation may reference. ROLLBACK reverts a balance movement; REFUND only a BET. */
+/** Kinds que cada operação pode referenciar. ROLLBACK reverte uma movimentação de saldo; REFUND, só uma BET. */
 const ALLOWED_REFERENCE_KINDS: Partial<Record<WagerTransactionKind, readonly WagerTransactionKind[]>> = {
   [WagerTransactionKind.Win]: [WagerTransactionKind.Bet],
   [WagerTransactionKind.Refund]: [WagerTransactionKind.Bet],
@@ -17,20 +17,20 @@ const ALLOWED_REFERENCE_KINDS: Partial<Record<WagerTransactionKind, readonly Wag
 };
 
 export interface SettlementInput {
-  /** A non-terminal transaction of `wallet`. */
+  /** Uma transação não terminal da `wallet`. */
   transaction: WagerTransaction;
-  /** Locked by the caller for the whole settlement. */
+  /** Travada por quem chama durante toda a liquidação. */
   wallet: Wallet;
-  /** Resolved by (providerId, referenceExternalTransactionId); undefined when absent. */
+  /** Resolvida por (providerId, referenceExternalTransactionId); undefined quando ausente. */
   reference: WagerTransaction | undefined;
-  /** Whether a PROCESSED REFUND/ROLLBACK already reverts `reference`. */
+  /** Se um REFUND/ROLLBACK PROCESSED já reverte a `reference`. */
   referenceAlreadyReversed: boolean;
-  /** The reference waiting window is over: stop waiting and reject. */
+  /** A janela de espera pela referência acabou: parar de esperar e rejeitar. */
   referenceDeadlinePassed: boolean;
-  /** Id of the ledger entry, if one is produced. */
+  /** Id do lançamento no ledger, se algum for produzido. */
   ledgerEntryId: string;
   now: Date;
-  /** When to retry if the transaction has to wait for its reference. */
+  /** Quando tentar de novo, se a transação tiver de esperar pela referência. */
   nextAttemptAt: Date;
 }
 
@@ -45,9 +45,9 @@ type ReferenceResolution =
   | { kind: "reject"; code: FailureCode };
 
 /**
- * Applies the business rules of a wager operation to a locked wallet. Pure
- * domain logic: mutates the transaction and the wallet through their own
- * transitions and returns what the caller must persist.
+ * Aplica as regras de negócio de uma operação de aposta a uma wallet travada.
+ * Lógica de domínio pura: muta a transação e a wallet pelas transições delas e
+ * devolve o que quem chama precisa persistir.
  */
 export function settleWagerTransaction(input: SettlementInput): SettlementOutcome {
   const { transaction, wallet, now } = input;
@@ -124,7 +124,7 @@ function resolveReference(
   }
 
   if (transaction.isReversal()) {
-    // Partial reversals are out of scope: the reversal must mirror the reference exactly.
+    // Reversão parcial está fora do escopo: a reversão precisa espelhar a referência exatamente.
     if (!reference.money.equals(transaction.money)) return { kind: "reject", code: FailureCode.AmountMismatch };
     if (alreadyReversed) return { kind: "reject", code: FailureCode.ReferenceAlreadyReversed };
   }

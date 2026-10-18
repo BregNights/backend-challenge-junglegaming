@@ -5,7 +5,7 @@ import { createTestOrm, resetSchema } from "../support/database";
 import { waitFor } from "../support/messaging";
 import { createWallet, ledgerOf, outboxEventTypes, submitWager, walletsDivergingFromLedger } from "../support/wagering";
 
-/** Out-of-order references resolved by the scheduled worker (two instances). */
+/** Referências fora de ordem resolvidas pelo worker agendado (duas instâncias). */
 
 let orm: MikroORM;
 let workers: TestApp[];
@@ -64,7 +64,7 @@ describe("pending references", () => {
       "WagerTransactionRejected",
     ]);
 
-    // A replay of the original request now reflects the final decision.
+    // Um replay da requisição original agora reflete a decisão final.
     const replay = await submitWager(api, wallet, request);
     expect(replay.status).toBe(422);
     expect(replay.body).toMatchObject({ status: "REJECTED", failureCode: "REFERENCE_NOT_FOUND", idempotentReplay: true });

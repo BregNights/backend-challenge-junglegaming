@@ -1,9 +1,9 @@
 type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 
 /**
- * Deterministic JSON: object keys sorted recursively, no whitespace, `undefined`
- * properties omitted. Two payloads with the same content always produce the
- * same string, whatever the key order they arrived in.
+ * JSON determinístico: chaves dos objetos ordenadas recursivamente, sem espaços e
+ * sem propriedades `undefined`. Dois payloads com o mesmo conteúdo sempre geram a
+ * mesma string, qualquer que seja a ordem em que as chaves chegaram.
  */
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(normalize(value));

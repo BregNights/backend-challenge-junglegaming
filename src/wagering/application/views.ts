@@ -2,11 +2,11 @@ import type { MoneyProps } from "../../shared/domain/money";
 import type { FailureCode } from "../domain/failure-code";
 import type { WagerTransaction, WagerTransactionKind, WagerTransactionStatus } from "../domain/wager-transaction";
 
-/** Response of a submission, identical for the original request and its replays. */
+/** Resposta de uma submissão, idêntica para a requisição original e seus replays. */
 export interface WagerTransactionResult {
   transactionId: string;
   status: WagerTransactionStatus;
-  /** Balance observed when the transaction was decided (current balance while pending). */
+  /** Saldo observado quando a transação foi decidida (o saldo atual, enquanto pendente). */
   balance: MoneyProps;
   failureCode?: FailureCode;
   idempotentReplay: boolean;

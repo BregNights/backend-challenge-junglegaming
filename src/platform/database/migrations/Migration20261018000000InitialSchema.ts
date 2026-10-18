@@ -1,10 +1,10 @@
 import { Migration } from "@mikro-orm/migrations";
 
 /**
- * Initial schema. Every financial invariant the application relies on is also
- * enforced here, so a bug in application code fails the transaction instead of
- * corrupting balances. See ARCHITECTURE.md ("Schema e constraints") for the
- * rationale of each guarantee.
+ * Schema inicial. Toda invariante financeira de que a aplicação depende também é
+ * garantida aqui, para que um bug no código da aplicação derrube a transação em vez
+ * de corromper saldos. Ver ARCHITECTURE.md ("Schema e constraints") para o porquê
+ * de cada garantia.
  */
 export class Migration20261018000000InitialSchema extends Migration {
   override name = "Migration20261018000000InitialSchema";
@@ -22,7 +22,7 @@ export class Migration20261018000000InitialSchema extends Migration {
         updated_at  timestamptz    not null,
 
         constraint wallets_player_currency_uq unique (player_id, currency),
-        -- target of the ledger FK that pins every entry to the wallet currency
+        -- alvo da FK do ledger que prende cada lançamento à moeda da wallet
         constraint wallets_id_currency_uq unique (id, currency),
         constraint wallets_currency_ck check (currency ~ '^[A-Z]{3}$'),
         constraint wallets_balance_non_negative_ck check (balance >= 0),
@@ -61,12 +61,12 @@ export class Migration20261018000000InitialSchema extends Migration {
         constraint wager_tx_status_ck
           check (status in ('PENDING', 'PENDING_REFERENCE', 'PROCESSED', 'REJECTED', 'FAILED')),
         constraint wager_tx_currency_ck check (currency ~ '^[A-Z]{3}$'),
-        -- only LOSS may carry a zero amount; a zero ledger entry is meaningless
+        -- só LOSS pode ter valor zero; um lançamento de zero no ledger não faz sentido
         constraint wager_tx_amount_ck check (amount > 0 or (kind = 'LOSS' and amount = 0)),
         constraint wager_tx_payload_hash_ck check (payload_hash ~ '^[0-9a-f]{64}$'),
 
-        -- OPENING is internal: it is the only kind without provider identity, so a
-        -- provider can never submit one, and every provider operation is fully identified.
+        -- OPENING é interno: é o único kind sem identidade de provedor, então um provedor
+        -- nunca consegue submetê-lo, e toda operação de provedor é totalmente identificada.
         constraint wager_tx_origin_ck check (
           case when kind = 'OPENING' then
             provider_id is null and external_transaction_id is null and idempotency_key is null
@@ -90,7 +90,7 @@ export class Migration20261018000000InitialSchema extends Migration {
 
         constraint wager_tx_failure_code_ck check ((status in ('REJECTED', 'FAILED')) = (failure_code is not null)),
         constraint wager_tx_processed_at_ck check ((status = 'PROCESSED') = (processed_at is not null)),
-        -- replays must return the balance observed when the transaction was decided
+        -- replays precisam devolver o saldo observado quando a transação foi decidida
         constraint wager_tx_balance_snapshot_ck
           check (status not in ('PROCESSED', 'REJECTED') or balance_after is not null),
         constraint wager_tx_balance_after_ck check (balance_after >= 0),
@@ -100,13 +100,13 @@ export class Migration20261018000000InitialSchema extends Migration {
         constraint wager_tx_idempotency_uq unique (provider_id, idempotency_key),
         constraint wager_tx_external_id_uq unique (provider_id, external_transaction_id),
 
-        -- targets of composite FKs (see wager_tx_reference_fk and ledger_transaction_fk)
+        -- alvos de FKs compostas (ver wager_tx_reference_fk e ledger_transaction_fk)
         constraint wager_tx_reference_scope_uq unique (id, wallet_id, provider_id, round_id, currency),
         constraint wager_tx_ledger_scope_uq unique (id, wallet_id, currency, amount),
 
         constraint wager_tx_wallet_fk foreign key (wallet_id)
           references wallets (id) deferrable initially deferred,
-        -- a resolved reference must live in the same wallet, provider, round and currency
+        -- uma referência resolvida precisa estar na mesma wallet, provedor, rodada e moeda
         constraint wager_tx_reference_fk
           foreign key (reference_transaction_id, wallet_id, provider_id, round_id, currency)
           references wager_transactions (id, wallet_id, provider_id, round_id, currency)
@@ -115,7 +115,7 @@ export class Migration20261018000000InitialSchema extends Migration {
     `);
 
     this.addSql(`create unique index wager_tx_opening_uq on wager_transactions (wallet_id) where kind = 'OPENING'`);
-    // a transaction can be reverted at most once, whatever the reversal kind (see ARCHITECTURE.md)
+    // uma transação pode ser revertida no máximo uma vez, qualquer que seja o tipo de reversão (ver ARCHITECTURE.md)
     this.addSql(`
       create unique index wager_tx_single_reversal_uq on wager_transactions (reference_transaction_id)
       where kind in ('REFUND', 'ROLLBACK') and status = 'PROCESSED'
@@ -153,13 +153,13 @@ export class Migration20261018000000InitialSchema extends Migration {
         constraint ledger_wallet_version_ck check (wallet_version >= 1),
 
         constraint ledger_transaction_wallet_uq unique (transaction_id, wallet_id),
-        -- one entry per wallet version: a lost update collides here instead of passing silently;
-        -- also the stable cursor of the ledger pagination
+        -- um lançamento por versão da wallet: um lost update colide aqui em vez de passar em silêncio;
+        -- é também o cursor estável da paginação do ledger
         constraint ledger_wallet_version_uq unique (wallet_id, wallet_version),
 
         constraint ledger_wallet_fk foreign key (wallet_id, currency)
           references wallets (id, currency) deferrable initially deferred,
-        -- entry amount and currency are exactly those of its transaction, in the same wallet
+        -- valor e moeda do lançamento são exatamente os da transação, na mesma wallet
         constraint ledger_transaction_fk foreign key (transaction_id, wallet_id, currency, amount)
           references wager_transactions (id, wallet_id, currency, amount) deferrable initially deferred
       )
@@ -267,9 +267,9 @@ export class Migration20261018000000InitialSchema extends Migration {
       for each statement execute function wallet_ledger_entries_append_only()
     `);
 
-    // Each entry continues the previous one: same wallet, next version, balance_before
-    // equal to the previous balance_after. A wallet's first entry starts from zero, at
-    // version 1 (OPENING) or 2 (first credit of a wallet opened with zero balance).
+    // Cada lançamento continua o anterior: mesma wallet, próxima versão, balance_before
+    // igual ao balance_after anterior. O primeiro lançamento de uma wallet parte de zero,
+    // na versão 1 (OPENING) ou 2 (primeiro crédito de uma wallet aberta com saldo zero).
     this.addSql(`
       create function wallet_ledger_entries_chain() returns trigger language plpgsql as $$
       declare
@@ -297,9 +297,9 @@ export class Migration20261018000000InitialSchema extends Migration {
       for each row execute function wallet_ledger_entries_chain()
     `);
 
-    // At commit, every touched wallet must equal the tail of its ledger: same balance
-    // and same version. Deferred so the wallet update and the ledger insert can happen
-    // in any order inside the transaction.
+    // No commit, toda wallet tocada precisa ser igual à cauda do seu ledger: mesmo saldo
+    // e mesma versão. Diferido para que o update da wallet e o insert no ledger possam
+    // acontecer em qualquer ordem dentro da transação.
     this.addSql(`
       create function assert_wallet_matches_ledger() returns trigger language plpgsql as $$
       declare
@@ -344,8 +344,8 @@ export class Migration20261018000000InitialSchema extends Migration {
       for each row execute function assert_wallet_matches_ledger()
     `);
 
-    // At commit, a transaction has a ledger entry if and only if it is PROCESSED and moves
-    // the balance (everything but LOSS), and the entry direction follows from its kind.
+    // No commit, uma transação tem lançamento se e somente se está PROCESSED e mexe no
+    // saldo (tudo menos LOSS), e a direção do lançamento decorre do kind.
     this.addSql(`
       create function assert_transaction_matches_ledger() returns trigger language plpgsql as $$
       declare

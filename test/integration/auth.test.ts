@@ -11,9 +11,9 @@ import { createTestOrm, resetSchema } from "../support/database";
 import { ledgerOf, wagerBody } from "../support/wagering";
 
 /**
- * Authentication is not implemented, but its extension point is real: swapping
- * the no-op ProviderIdentityPort for an OIDC-like adapter is enough to enforce
- * credentials and provider identity, with health and metrics left public.
+ * A autenticação não está implementada, mas o ponto de extensão é real: trocar a
+ * ProviderIdentityPort no-op por um adaptador ao estilo OIDC basta para exigir
+ * credenciais e a identidade do provedor, deixando health e métricas públicos.
  */
 
 class FakeOidcIdentity implements ProviderIdentityPort {
@@ -87,7 +87,7 @@ describe("authentication extension point", () => {
     expect(forbidden.status).toBe(403);
     expect(forbidden.body.error).toBe("PROVIDER_FORBIDDEN");
 
-    // Nothing was persisted for the forbidden attempt.
+    // Nada foi persistido na tentativa proibida.
     expect((await ledgerOf(orm, wallet.id)).filter((entry) => entry.direction === "DEBIT")).toHaveLength(1);
   });
 

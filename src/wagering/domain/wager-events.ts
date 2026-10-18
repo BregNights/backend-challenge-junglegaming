@@ -40,7 +40,7 @@ export interface WagerTransactionProcessedData extends TransactionIdentity {
   processedAt: string;
 }
 
-/** Any applied provider transaction, LOSS included. */
+/** Qualquer transação de provedor aplicada, inclusive LOSS. */
 export class WagerTransactionProcessed extends IntegrationEvent<WagerTransactionProcessedData> {
   readonly eventType = "WagerTransactionProcessed";
   readonly version = 1;

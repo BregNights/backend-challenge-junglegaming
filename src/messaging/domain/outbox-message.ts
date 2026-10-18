@@ -17,8 +17,8 @@ export interface OutboxMessageState {
 }
 
 /**
- * An integration event waiting to be published. Written in the same SQL
- * transaction as the change it describes; published afterwards by a worker.
+ * Um evento de integração aguardando publicação. Gravado na mesma transação SQL
+ * que a mudança que ele descreve; publicado depois por um worker.
  */
 export class OutboxMessage {
   private constructor(
@@ -34,7 +34,7 @@ export class OutboxMessage {
     private _lastError?: string,
   ) {}
 
-  /** The outbox id is the event id, so consumers can deduplicate redeliveries by it. */
+  /** O id da outbox é o id do evento, para que os consumidores dedupliquem redeliveries por ele. */
   static enqueue(event: IntegrationEvent<unknown>): OutboxMessage {
     return new OutboxMessage(
       event.eventId,
@@ -92,7 +92,7 @@ export class OutboxMessage {
     this._lastError = undefined;
   }
 
-  /** Increments attempts and computes the next attempt with exponential backoff. */
+  /** Incrementa as tentativas e calcula a próxima com backoff exponencial. */
   scheduleRetry(now: Date, error?: string): void {
     this._attempts += 1;
     this._nextAttemptAt = addMs(now, backoffDelayMs(this._attempts, OUTBOX_RETRY_POLICY));

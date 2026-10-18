@@ -9,7 +9,7 @@ import { WagerQueries } from "../application/wager-queries";
 import { WagerTransactionStatus as Status } from "../domain/wager-transaction";
 import { idempotencyKeySchema, wagerRequestSchema } from "../wager-request.schema";
 
-/** Decided outcomes are distinguishable by status code alone. */
+/** Resultados decididos se distinguem só pelo status code. */
 const STATUS_CODE: Record<Status, number> = {
   [Status.Processed]: 200,
   [Status.PendingReference]: 202,

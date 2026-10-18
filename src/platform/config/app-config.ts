@@ -11,29 +11,29 @@ export interface DatabaseConfig {
 
 export interface SqsConfig {
   readonly region: string;
-  /** Unset in real AWS; points to MiniStack locally. */
+  /** Vazio na AWS real; aponta para o MiniStack localmente. */
   readonly endpoint: string | undefined;
   readonly wagerQueueName: string;
   readonly wagerDlqName: string;
   readonly eventsQueueName: string;
   readonly maxReceiveCount: number;
   readonly visibilityTimeoutSeconds: number;
-  /** Long-polling wait of the consumer (20 s in production, shorter in tests). */
+  /** Espera do long polling do consumer (20 s em produção, menos nos testes). */
   readonly receiveWaitSeconds: number;
-  /** Visibility backoff after a transient failure: base · 2^(receiveCount − 1), capped. */
+  /** Backoff de visibilidade após falha transitória: base · 2^(receiveCount − 1), com teto. */
   readonly retryBaseSeconds: number;
   readonly retryMaxSeconds: number;
 }
 
 export interface WorkersConfig {
-  /** How long shutdown waits for in-flight messages before handing them back to the queue. */
+  /** Quanto o shutdown espera pelas mensagens em andamento antes de devolvê-las à fila. */
   readonly shutdownGraceMs: number;
   readonly outboxPollIntervalMs: number;
   readonly outboxBatchSize: number;
   readonly pendingReferencePollIntervalMs: number;
   readonly pendingReferenceBatchSize: number;
   readonly pendingReferenceTtlMs: number;
-  /** Test-only crash points, inert unless explicitly set. */
+  /** Pontos de crash só para testes, inertes sem configuração explícita. */
   readonly faultInjection: FaultPoint | undefined;
 }
 
@@ -50,8 +50,8 @@ export class ConfigError extends Error {
 }
 
 /**
- * Typed, validated view over environment variables. Built once at bootstrap so a
- * misconfigured instance fails fast instead of at the first request.
+ * Visão tipada e validada das variáveis de ambiente. Montada uma vez no bootstrap,
+ * para que uma instância mal configurada falhe logo, e não na primeira requisição.
  */
 export class AppConfig {
   private constructor(
@@ -94,7 +94,7 @@ export class AppConfig {
       {
         shutdownGraceMs: reader.int("SHUTDOWN_GRACE_MS", 10_000),
         outboxPollIntervalMs: reader.int("OUTBOX_POLL_INTERVAL_MS", 500),
-        // SendMessageBatch accepts at most 10 entries.
+        // O SendMessageBatch aceita no máximo 10 entradas.
         outboxBatchSize: reader.int("OUTBOX_BATCH_SIZE", 10, { min: 1, max: 10 }),
         pendingReferencePollIntervalMs: reader.int("PENDING_REFERENCE_POLL_INTERVAL_MS", 1_000),
         pendingReferenceBatchSize: reader.int("PENDING_REFERENCE_BATCH_SIZE", 20),

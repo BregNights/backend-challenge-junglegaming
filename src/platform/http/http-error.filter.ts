@@ -20,14 +20,14 @@ interface ErrorResponse {
   headers?: Record<string, string>;
 }
 
-/** Retry hint for transient failures; providers resend with the same Idempotency-Key. */
+/** Dica de retry para falhas transitórias; o provedor reenvia com a mesma Idempotency-Key. */
 const RETRY_AFTER_SECONDS = "1";
 
 /**
- * One mapping for every endpoint, so the status code alone tells a provider
- * what to do: 400 fix the payload, 401/403 credentials, 404 unknown resource,
- * 409 idempotency conflict, 422 business rejection (returned by controllers,
- * not thrown), 503 retry later with the same key.
+ * Um único mapeamento para todos os endpoints, para que só o status code já diga
+ * ao provedor o que fazer: 400 corrigir o payload, 401/403 credenciais, 404
+ * recurso inexistente, 409 conflito de idempotência, 422 rejeição de negócio
+ * (devolvida pelos controllers, não lançada), 503 tentar de novo com a mesma chave.
  */
 @Catch()
 export class HttpErrorFilter implements ExceptionFilter {

@@ -1,8 +1,9 @@
 import { ValidationError } from "../../shared/application/errors";
 
 /**
- * Opaque cursor over the wallet version of the last returned entry. Entries are
- * immutable and versions unique per wallet, so pages never shift or repeat.
+ * Cursor opaco sobre a versão da wallet do último lançamento devolvido. Lançamentos
+ * são imutáveis e as versões são únicas por wallet, então as páginas nunca se
+ * deslocam nem se repetem.
  */
 export function encodeLedgerCursor(walletVersion: number): string {
   return Buffer.from(JSON.stringify({ v: walletVersion })).toString("base64url");
@@ -14,7 +15,7 @@ export function decodeLedgerCursor(cursor: string): number {
     const version = (parsed as { v?: unknown } | null)?.v;
     if (typeof version === "number" && Number.isInteger(version) && version >= 1) return version;
   } catch {
-    // fall through to the validation error
+    // segue para o erro de validação
   }
   throw new ValidationError("Invalid ledger cursor", [{ path: "cursor", message: "not a cursor returned by this API" }]);
 }

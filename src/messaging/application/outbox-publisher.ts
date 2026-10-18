@@ -6,7 +6,7 @@ import type { OutboxMessage } from "../domain/outbox-message";
 
 export interface PublishResult {
   published: ReadonlySet<string>;
-  /** Message id → reason. */
+  /** Id da mensagem → motivo. */
   failed: ReadonlyMap<string, string>;
 }
 
@@ -16,11 +16,11 @@ export interface EventPublisher {
 }
 
 /**
- * Publishes due outbox messages. The batch is claimed with FOR UPDATE SKIP
- * LOCKED, so concurrent publishers (one per instance) take disjoint batches; the
- * row locks are released by commit, or by Postgres when a publisher dies.
- * Delivery is at-least-once: a crash after publishing and before committing
- * publishes again, and consumers deduplicate by eventId.
+ * Publica as mensagens vencidas da outbox. O lote é reivindicado com FOR UPDATE
+ * SKIP LOCKED, então publishers concorrentes (um por instância) pegam lotes
+ * disjuntos; os locks de linha são liberados pelo commit, ou pelo Postgres quando
+ * um publisher morre. A entrega é at-least-once: um crash depois de publicar e
+ * antes do commit publica de novo, e os consumidores deduplicam por eventId.
  */
 @Injectable()
 export class OutboxPublisher {
@@ -34,7 +34,7 @@ export class OutboxPublisher {
     @Inject(FAULT_INJECTOR) private readonly faults: FaultInjector,
   ) {}
 
-  /** Publishes one batch; returns how many messages were claimed. */
+  /** Publica um lote; devolve quantas mensagens foram reivindicadas. */
   async publishBatch(limit: number): Promise<number> {
     const claimed = await this.uow.run(async (store) => {
       const now = this.clock.now();

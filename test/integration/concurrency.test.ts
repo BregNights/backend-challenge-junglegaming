@@ -6,9 +6,9 @@ import { createTestOrm, resetSchema, TEST_DATABASE_URL } from "../support/databa
 import { createWallet, ledgerOf, submitWager, walletsDivergingFromLedger } from "../support/wagering";
 
 /**
- * Real parallelism, no sequential mocks: concurrent HTTP requests against the
- * real application and PostgreSQL, and several independent OS processes
- * competing for the same wallet.
+ * Paralelismo real, sem mocks sequenciais: requisições HTTP concorrentes contra a
+ * aplicação e o PostgreSQL reais, e vários processos independentes do sistema
+ * operacional disputando a mesma wallet.
  */
 
 let orm: MikroORM;
@@ -45,7 +45,7 @@ describe("same wallet", () => {
     expect((await api.get(`/wallets/${wallet.id}`)).body.balance.amount).toBe("20.00");
     expect(await debits(wallet.id)).toHaveLength(1);
 
-    // Retrying both requests changes nothing.
+    // Reenviar as duas requisições não muda nada.
     const retries = await Promise.all(
       results.map((result) =>
         api.get(`/wagering/transactions/${result.body.transactionId}`).then((stored) =>
@@ -85,7 +85,7 @@ describe("same wallet", () => {
     const rejected = results.filter((r) => r.body.status === "REJECTED");
     expect(rejected.every((r) => r.body.failureCode === "INSUFFICIENT_FUNDS")).toBe(true);
 
-    // 20.00 + 40 × 0.50 − processedBets × 1.00, computed in cents to stay exact.
+    // 20.00 + 40 × 0.50 − processedBets × 1.00, calculado em centavos para ficar exato.
     const expectedCents = 2_000 + 40 * 50 - processedBets * 100;
     const finalBalance = (await api.get(`/wallets/${wallet.id}`)).body.balance.amount as string;
     expect(finalBalance).toBe(`${Math.floor(expectedCents / 100)}.${String(expectedCents % 100).padStart(2, "0")}`);
@@ -140,7 +140,7 @@ describe("multiple instances", () => {
     const clients = PORTS.map((port) => apiClient(`http://127.0.0.1:${port}`));
     const wallet = await createWallet(clients[0]!, "100.00");
 
-    // 30 distinct bets of 10.00, each delivered to all three instances at once.
+    // 30 apostas distintas de 10.00, cada uma entregue às três instâncias ao mesmo tempo.
     const bets = Array.from({ length: 30 }, (_, i) => ({ kind: "BET", amount: "10.00", externalTransactionId: `multi-${i}` }));
     const results = await Promise.all(bets.flatMap((bet) => clients.map((client) => submitWager(client, wallet, bet))));
 
@@ -165,7 +165,7 @@ async function waitUntilLive(baseUrl: string, timeoutMs = 30_000): Promise<void>
     try {
       if ((await fetch(`${baseUrl}/health/live`)).ok) return;
     } catch {
-      // not listening yet
+      // ainda não está escutando
     }
     await Bun.sleep(200);
   }

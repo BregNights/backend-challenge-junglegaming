@@ -2,9 +2,9 @@ import { Injectable } from "@nestjs/common";
 import type { Caller, ProviderIdentityPort } from "../../shared/application/provider-identity";
 
 /**
- * Deliberate no-op: authentication is out of this delivery's scope (it scores
- * no points). Every caller is unrestricted. Replacing this binding with an OIDC
- * adapter is the only change needed to enforce provider identity.
+ * No-op proposital: autenticação está fora do escopo desta entrega (não pontua).
+ * Todo caller é unrestricted. Trocar este binding por um adaptador OIDC é a única
+ * mudança necessária para exigir a identidade do provedor.
  */
 @Injectable()
 export class NoAuthProviderIdentity implements ProviderIdentityPort {

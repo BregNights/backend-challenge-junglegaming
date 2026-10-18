@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { canonicalJson } from "../../shared/application/canonical-json";
 import type { Money } from "../../shared/domain/money";
 
-/** The business fields of a wager operation: exactly what defines "the same request". */
+/** Os campos de negócio de uma operação de aposta: exatamente o que define "a mesma requisição". */
 export interface WagerPayload {
   providerId: string;
   externalTransactionId: string;
@@ -16,9 +16,9 @@ export interface WagerPayload {
 }
 
 /**
- * SHA-256 (hex) of the canonical JSON of the business fields. The idempotency
- * key and transport metadata (messageId, occurredAt, headers) are deliberately
- * excluded; money is hashed in its canonical two-decimal form.
+ * SHA-256 (hex) do JSON canônico dos campos de negócio. A idempotency key e os
+ * metadados de transporte (messageId, occurredAt, headers) ficam de fora de
+ * propósito; o dinheiro entra na forma canônica de duas casas.
  */
 export function hashWagerPayload(payload: WagerPayload): string {
   const canonical = canonicalJson({

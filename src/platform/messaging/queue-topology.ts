@@ -13,12 +13,12 @@ export interface QueueUrls {
 }
 
 /**
- * Creates (or converges) the queues the service depends on. Idempotent: queues
- * are created with only the immutable `FifoQueue` attribute, and every mutable
- * attribute is applied afterwards, so re-running never fails on drift.
+ * Cria (ou converge) as filas de que o serviço depende. Idempotente: as filas são
+ * criadas só com o atributo imutável `FifoQueue`, e todo atributo mutável é
+ * aplicado depois, então rodar de novo nunca falha por divergência.
  *
- * In a real AWS account this belongs to infrastructure-as-code; locally it runs
- * as the one-shot `bootstrap` service in docker-compose.
+ * Numa conta AWS real isso pertence à infraestrutura como código; localmente roda
+ * no serviço one-shot `bootstrap` do docker-compose.
  */
 export async function provisionQueues(client: SQSClient, config: SqsConfig): Promise<QueueUrls> {
   const wagerDlq = await ensureFifoQueue(client, config.wagerDlqName, {

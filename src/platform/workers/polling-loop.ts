@@ -1,10 +1,10 @@
 import type { Logger } from "@nestjs/common";
 
 /**
- * Runs `tick` repeatedly. A tick that reports more work (returns true) is
- * followed immediately by the next one, so backlogs drain at full speed;
- * otherwise the loop sleeps for `intervalMs`. `stop()` interrupts the sleep and
- * resolves once the tick in progress has finished.
+ * Executa `tick` repetidamente. Um tick que indica mais trabalho (devolve true) é
+ * seguido na hora pelo próximo, para que o backlog escoe na velocidade máxima;
+ * caso contrário, o loop dorme por `intervalMs`. `stop()` interrompe o sono e
+ * resolve quando o tick em andamento termina.
  */
 export class PollingLoop {
   private running = false;

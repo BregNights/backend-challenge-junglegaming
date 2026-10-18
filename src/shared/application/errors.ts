@@ -1,7 +1,7 @@
 /**
- * Application-level failures. Each one maps to exactly one transport outcome
- * (see the HTTP error filter), so providers never have to parse messages to
- * decide whether to resend.
+ * Falhas da camada de aplicação. Cada uma corresponde a exatamente um resultado
+ * no transporte (ver o filtro de erros HTTP), para que o provedor nunca precise
+ * interpretar mensagens para decidir se reenvia.
  */
 export abstract class ApplicationError extends Error {
   abstract readonly code: string;
@@ -17,7 +17,7 @@ export interface ValidationIssue {
   message: string;
 }
 
-/** Malformed input: 400, nothing persisted. */
+/** Entrada malformada: 400, nada é persistido. */
 export class ValidationError extends ApplicationError {
   readonly code = "VALIDATION_ERROR";
 
@@ -49,34 +49,34 @@ export class WalletAlreadyExistsError extends ApplicationError {
   }
 }
 
-/** Same idempotency key (or external id) with a different payload: a conflict, never a replay. */
+/** Mesma idempotency key (ou id externo) com payload diferente: conflito, nunca replay. */
 export class IdempotencyConflictError extends ApplicationError {
   readonly code = "IDEMPOTENCY_CONFLICT";
 }
 
-/** Missing or invalid credentials: 401. */
+/** Credenciais ausentes ou inválidas: 401. */
 export class UnauthenticatedError extends ApplicationError {
   readonly code = "UNAUTHENTICATED";
 }
 
-/** Authenticated provider acting on another provider's operations: 403. */
+/** Provedor autenticado agindo sobre operações de outro provedor: 403. */
 export class ProviderForbiddenError extends ApplicationError {
   readonly code = "PROVIDER_FORBIDDEN";
 }
 
-/** Same transport message id with a different body: a producer bug, never retried. */
+/** Mesmo id de mensagem de transporte com outro corpo: bug do produtor, nunca é retentado. */
 export class InboxConflictError extends ApplicationError {
   readonly code = "INBOX_CONFLICT";
 }
 
-/** Retryable infrastructure failure (database/broker unavailable, lock timeout): 503 / SQS retry. */
+/** Falha de infraestrutura retentável (banco ou broker indisponível, lock timeout): 503 / retry no SQS. */
 export class TransientInfrastructureError extends ApplicationError {
   readonly code = "TEMPORARILY_UNAVAILABLE";
 }
 
 /**
- * A write lost a race on a unique constraint. The unit of work raises it with
- * the constraint name; use cases decide whether it means conflict or retry.
+ * Uma escrita perdeu a corrida numa constraint única. O unit of work a lança com
+ * o nome da constraint; os use cases decidem se isso significa conflito ou retry.
  */
 export class UniqueConstraintConflict extends Error {
   constructor(

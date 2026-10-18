@@ -46,9 +46,10 @@ interface PgLikeError {
 }
 
 /**
- * Turns driver errors into the two failure kinds use cases reason about:
- * retryable infrastructure trouble and lost unique-constraint races. Domain and
- * application errors thrown inside the unit of work pass through untouched.
+ * Transforma erros do driver nos dois tipos de falha com que os use cases
+ * raciocinam: problema de infraestrutura retentável e corrida perdida numa
+ * constraint única. Erros de domínio e de aplicação lançados dentro do unit of
+ * work passam intactos.
  */
 export function translateDatabaseError(error: unknown, metrics: WageringMetrics): unknown {
   if (error instanceof DomainError || error instanceof ApplicationError || error instanceof UniqueConstraintConflict) {

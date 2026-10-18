@@ -14,8 +14,8 @@ export class MikroOrmUnitOfWork implements UnitOfWork {
 
   async run<T>(work: (store: TransactionalStore) => Promise<T>): Promise<T> {
     try {
-      // A fresh fork per unit of work: an empty identity map, so nothing read in
-      // a previous attempt (or request) can leak stale state into this one.
+      // Um fork novo por unit of work: identity map vazio, para que nada lido numa
+      // tentativa (ou requisição) anterior vaze estado velho para esta.
       return await this.em.fork().transactional((em) => work(new MikroOrmStore(em)));
     } catch (error) {
       throw translateDatabaseError(error, this.metrics);

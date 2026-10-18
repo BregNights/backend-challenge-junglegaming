@@ -17,7 +17,7 @@ import {
 } from "../support/messaging";
 import { createWallet, ledgerOf, type TestWallet, walletsDivergingFromLedger } from "../support/wagering";
 
-/** The SQS consumer against real MiniStack queues and PostgreSQL. */
+/** O consumer SQS contra filas reais do MiniStack e PostgreSQL. */
 
 let orm: MikroORM;
 let sqs: SQSClient;
@@ -161,7 +161,7 @@ describe("SQS consumer", () => {
     const envelope = wagerEnvelope(wallet, { kind: "BET", amount: "10.00" });
     const retriesBefore = metricValue(await metricsOf(app.baseUrl), "wagering_messages_retried_total");
 
-    // Hold the wallet lock longer than the consumer's lock_timeout (500 ms).
+    // Segura o lock da wallet por mais tempo que o lock_timeout do consumer (500 ms).
     let release!: () => void;
     const released = new Promise<void>((resolve) => (release = resolve));
     const holding = orm.em.fork().transactional(async (em) => {
@@ -246,7 +246,7 @@ describe("crash between commit and ack", () => {
     expect(exitCode).not.toBe("timeout");
     expect(exitCode).not.toBe(0);
 
-    // Committed, but never acknowledged.
+    // Commit feito, mas nunca confirmado (sem ack).
     expect(await transactionsFor(envelope.data.externalTransactionId)).toMatchObject([{ status: "PROCESSED" }]);
     expect(await queueDepth(sqs, queues.urls.wager)).toBe(1);
 
@@ -268,8 +268,8 @@ describe("graceful shutdown and restart", () => {
   let queues: TestQueues;
 
   beforeAll(async () => {
-    // A long visibility timeout: if shutdown did not hand messages back, the restarted
-    // instance would only see them after 30 s and the test would time out.
+    // Visibility timeout longo: se o shutdown não devolvesse as mensagens, a instância
+    // reiniciada só as veria depois de 30 s e o teste estouraria o tempo.
     queues = await createTestQueues(sqs, { visibilityTimeoutSeconds: 30 });
   });
 
@@ -284,7 +284,7 @@ describe("graceful shutdown and restart", () => {
     for (const envelope of envelopes) await sendEnvelope(sqs, queues.urls.wager, envelope);
 
     await waitFor("consumption started", async () => (await ledgerOf(orm, wallet.id)).length > 1, 10_000, 50);
-    await first.close(); // what SIGTERM triggers through enableShutdownHooks
+    await first.close(); // o que o SIGTERM dispara via enableShutdownHooks
 
     const second = await startTestApp({ ...queues.env, APP_ROLES: "api,sqs-consumer" });
     try {

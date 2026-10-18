@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ValidationError } from "../../shared/application/errors";
 
-/** Provider-side identifiers (provider, transaction, round, game ids). */
+/** Identificadores do lado do provedor (ids de provedor, transação, rodada e jogo). */
 export const identifierSchema = z
   .string()
   .min(1)
@@ -10,7 +10,7 @@ export const identifierSchema = z
 
 export const uuidSchema = z.uuid();
 
-/** Shape only: the amount/currency format is enforced by Money.from in the domain. */
+/** Só a forma: o formato de amount/currency é garantido pelo Money.from, no domínio. */
 export const moneySchema = z.object({ amount: z.string(), currency: z.string() });
 
 export function parseInput<T>(schema: z.ZodType<T>, input: unknown, label: string): T {

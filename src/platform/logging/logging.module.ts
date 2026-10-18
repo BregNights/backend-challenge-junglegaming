@@ -4,13 +4,13 @@ import { LoggerModule } from "nestjs-pino";
 import { AppConfig } from "../config/app-config";
 
 export const CORRELATION_ID_HEADER = "x-correlation-id";
-// Anything else is replaced, so callers cannot inject arbitrary content into logs.
+// Qualquer outra coisa é substituída, para que ninguém injete conteúdo arbitrário nos logs.
 const CORRELATION_ID_PATTERN = /^[\w.:-]{1,128}$/;
 
 /**
- * Structured JSON logs. Request/response bodies are never logged (they carry
- * financial payloads); identifiers such as walletId and transactionId are added
- * as fields by the code paths that know them.
+ * Logs JSON estruturados. Corpos de requisição e resposta nunca são logados (levam
+ * payloads financeiros); identificadores como walletId e transactionId entram como
+ * campos pelos trechos de código que os conhecem.
  */
 @Module({
   imports: [

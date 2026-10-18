@@ -32,7 +32,7 @@ export class WalletQueries {
     return this.uow.run(async (store) => {
       if (!(await store.wallets.findById(walletId))) throw new WalletNotFoundError(walletId);
 
-      // One extra row tells whether another page exists without a count query.
+      // Uma linha a mais diz se existe outra página, sem precisar de um count.
       const entries = await store.ledger.page(walletId, { beforeVersion, limit: options.limit + 1 });
       const page = entries.slice(0, options.limit);
       const last = page.at(-1);
@@ -44,9 +44,9 @@ export class WalletQueries {
   }
 
   /**
-   * Compares the materialized balance with the one rebuilt from the ledger.
-   * Divergences are never corrected silently: they are logged, counted and
-   * reported, and left for an operator to investigate.
+   * Compara o saldo materializado com o reconstruído a partir do ledger.
+   * Divergências nunca são corrigidas em silêncio: são logadas, contabilizadas e
+   * reportadas, e ficam para um operador investigar.
    */
   async reconcile(walletId: string, correlationId: string): Promise<ReconciliationReport> {
     const summary = await this.uow.run((store) => store.ledger.summarize(walletId));

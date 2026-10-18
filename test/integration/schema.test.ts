@@ -5,8 +5,8 @@ import { Money } from "../../src/shared/domain/money";
 import { createTestOrm, resetSchema } from "../support/database";
 
 /**
- * The schema is the last line of defence for the financial invariants, so it is
- * tested on its own, with raw SQL, independently of the application code.
+ * O schema é a última linha de defesa das invariantes financeiras, então é testado
+ * sozinho, com SQL cru, independente do código da aplicação.
  */
 
 type Statement = readonly [sql: string, params?: readonly unknown[]];
@@ -114,7 +114,7 @@ function insertLedgerEntry(entry: {
   ];
 }
 
-/** A provider transaction with every identity column filled; override what the test is about. */
+/** Uma transação de provedor com todas as colunas de identidade preenchidas; sobrescreva o que o teste examina. */
 function providerTransaction(
   wallet: WalletState,
   overrides: Partial<TransactionRow> & Pick<TransactionRow, "kind" | "amount">,
@@ -141,7 +141,7 @@ function providerTransaction(
   };
 }
 
-/** Statements that apply a balance-moving transaction consistently: row, wallet update, ledger entry. */
+/** Comandos que aplicam de forma consistente uma transação que mexe no saldo: linha, update da wallet, lançamento. */
 function movement(wallet: WalletState, tx: TransactionRow, direction: Direction) {
   const amount = brl(tx.amount);
   const balanceAfter = direction === "CREDIT" ? wallet.balance.add(amount) : wallet.balance.subtract(amount);
@@ -203,7 +203,7 @@ async function processedBet(wallet: WalletState, amount: string, overrides: Part
   return { bet, wallet: next };
 }
 
-// -------------------------------------------------------------------- tests
+// -------------------------------------------------------------------- testes
 
 describe("migrations", () => {
   test("are reversible: down drops every object, up recreates them", async () => {

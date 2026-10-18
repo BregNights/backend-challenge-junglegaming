@@ -12,21 +12,21 @@ import { type Caller, PROVIDER_IDENTITY, type ProviderIdentityPort } from "../..
 
 const IS_PUBLIC = "auth:public";
 
-/** Opts a controller or route out of authentication (health checks, metrics). */
+/** Tira um controller ou rota da autenticação (health checks, métricas). */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
 
 type AuthenticatedRequest = Request & { caller?: Caller };
 
-/** The caller resolved by AuthGuard for the current request. */
+/** O caller resolvido pelo AuthGuard para a requisição atual. */
 export const CurrentCaller = createParamDecorator(
   (_: unknown, context: ExecutionContext): Caller | undefined =>
     context.switchToHttp().getRequest<AuthenticatedRequest>().caller,
 );
 
 /**
- * Global guard: every route is authenticated unless marked @Public(). It only
- * resolves the caller through the ProviderIdentityPort; authorization rules
- * (a provider acts on its own operations) live with the use cases' callers.
+ * Guard global: toda rota é autenticada, a menos que marcada com @Public(). Ele só
+ * resolve o caller pela ProviderIdentityPort; as regras de autorização (um provedor
+ * age sobre as próprias operações) ficam com quem chama os use cases.
  */
 @Injectable()
 export class AuthGuard implements CanActivate {

@@ -14,7 +14,7 @@ export interface WalletBalanceChangedData {
   walletVersion: number;
 }
 
-/** Emitted only when the balance changes (never for LOSS or rejections). */
+/** Emitido só quando o saldo muda (nunca para LOSS nem para rejeições). */
 export class WalletBalanceChanged extends IntegrationEvent<WalletBalanceChangedData> {
   readonly eventType = "WalletBalanceChanged";
   readonly version = 1;

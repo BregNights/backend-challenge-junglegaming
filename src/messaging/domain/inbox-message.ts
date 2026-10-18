@@ -10,9 +10,9 @@ export interface InboxMessageState extends ReceiveInboxProps {
 }
 
 /**
- * Persistent record of a transport message a consumer has handled, keyed by
- * (consumerName, messageId). Written in the same SQL transaction as the effect
- * of the message, so "processed" and "recorded" can never disagree.
+ * Registro persistente de uma mensagem de transporte tratada por um consumidor,
+ * com chave (consumerName, messageId). Gravado na mesma transação SQL que o efeito
+ * da mensagem, então "processada" e "registrada" nunca discordam.
  */
 export class InboxMessage {
   private constructor(
@@ -43,7 +43,7 @@ export class InboxMessage {
     this._processedAt ??= at;
   }
 
-  /** The same message id carrying a different body is a producer bug, not a redelivery. */
+  /** O mesmo id de mensagem com outro corpo é bug do produtor, não redelivery. */
   matchesPayload(payloadHash: string): boolean {
     return this.payloadHash === payloadHash;
   }

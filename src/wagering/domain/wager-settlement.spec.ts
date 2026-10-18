@@ -47,7 +47,7 @@ function tx(kind: Kind, amount: string, overrides: Partial<CreateWagerTransactio
   });
 }
 
-/** A transaction that already went through settlement successfully. */
+/** Uma transação que já passou pela liquidação com sucesso. */
 function processed(kind: Kind, amount: string, overrides: Partial<CreateWagerTransactionProps> = {}): WagerTransaction {
   const transaction = tx(kind, amount, overrides);
   transaction.markProcessed(overrides.referenceExternalTransactionId ? "ref-id" : undefined, brl("0.00"), at);

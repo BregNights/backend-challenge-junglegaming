@@ -1,2 +1,2 @@
-// NestJS DI relies on emitted decorator metadata being readable at import time.
+// A DI do NestJS depende de os metadados emitidos pelos decorators estarem legíveis no import.
 import "reflect-metadata";

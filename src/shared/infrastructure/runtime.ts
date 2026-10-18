@@ -8,7 +8,7 @@ export class SystemClock implements Clock {
   }
 }
 
-/** UUIDv7: time-ordered, so primary-key inserts stay append-friendly for the btree. */
+/** UUIDv7: ordenado no tempo, então os inserts na chave primária continuam sequenciais para a btree. */
 @Injectable()
 export class UuidV7Generator implements IdGenerator {
   next(): string {

@@ -4,7 +4,7 @@ import { LedgerDirection, oppositeDirection } from "../../wallet/domain/ledger-d
 import type { FailureCode } from "./failure-code";
 
 export enum WagerTransactionKind {
-  /** Internal: opening credit of a wallet. Never accepted from providers. */
+  /** Interno: crédito de abertura de uma wallet. Nunca aceito de provedores. */
   Opening = "OPENING",
   Bet = "BET",
   Win = "WIN",
@@ -14,15 +14,15 @@ export enum WagerTransactionKind {
 }
 
 export enum WagerTransactionStatus {
-  /** Accepted, not applied yet. */
+  /** Aceita, ainda não aplicada. */
   Pending = "PENDING",
-  /** Waiting for the referenced transaction to arrive. */
+  /** Aguardando a transação referenciada chegar. */
   PendingReference = "PENDING_REFERENCE",
-  /** Applied (terminal). */
+  /** Aplicada (terminal). */
   Processed = "PROCESSED",
-  /** Business rule violation (terminal). */
+  /** Violação de regra de negócio (terminal). */
   Rejected = "REJECTED",
-  /** Permanent infrastructure error (terminal, auditable). */
+  /** Erro permanente de infraestrutura (terminal, auditável). */
   Failed = "FAILED",
 }
 
@@ -53,7 +53,7 @@ export interface CreateWagerTransactionProps {
   gameId: string;
   kind: WagerTransactionKind;
   money: Money;
-  /** Provider-side id of the referenced transaction, not the internal id. */
+  /** Id da transação referenciada no provedor, não o id interno. */
   referenceExternalTransactionId?: string;
   createdAt: Date;
 }
@@ -65,7 +65,7 @@ export interface WagerTransactionState {
   walletId: string;
   playerId: string;
   money: Money;
-  /** Provider identity: absent only for OPENING. */
+  /** Identidade do provedor: ausente só no OPENING. */
   providerId?: string;
   externalTransactionId?: string;
   idempotencyKey?: string;
@@ -75,7 +75,7 @@ export interface WagerTransactionState {
   referenceExternalTransactionId?: string;
   referenceTransactionId?: string;
   failureCode?: FailureCode;
-  /** Balance observed when the transaction was decided; returned verbatim on replays. */
+  /** Saldo observado quando a transação foi decidida; devolvido tal qual nos replays. */
   balanceAfter?: Money;
   attempts: number;
   nextAttemptAt?: Date;
@@ -84,25 +84,25 @@ export interface WagerTransactionState {
   processedAt?: Date;
 }
 
-/** Invalid input for a new transaction (maps to 400, nothing is persisted). */
+/** Entrada inválida para uma transação nova (vira 400, nada é persistido). */
 export class InvalidWagerTransactionError extends DomainError {
   readonly code = "INVALID_WAGER_TRANSACTION";
 }
 
-/** A transition was attempted from a terminal state: a programming error, not a business path. */
+/** Tentativa de transição a partir de um estado terminal: erro de programação, não caminho de negócio. */
 export class InvalidTransactionStateError extends DomainError {
   readonly code = "INVALID_TRANSACTION_STATE";
 }
 
 /**
- * Valid transitions:
+ * Transições válidas:
  *
  *   PENDING ──────────────┬──► PROCESSED
  *      │                  ├──► REJECTED
  *      ▼                  └──► FAILED
- *   PENDING_REFERENCE ────┘    (and PENDING_REFERENCE → PENDING_REFERENCE on each retry)
+ *   PENDING_REFERENCE ────┘    (e PENDING_REFERENCE → PENDING_REFERENCE a cada nova tentativa)
  *
- * PROCESSED, REJECTED and FAILED are terminal.
+ * PROCESSED, REJECTED e FAILED são terminais.
  */
 export class WagerTransaction {
   readonly id: string;
@@ -152,7 +152,7 @@ export class WagerTransaction {
     this._processedAt = state.processedAt;
   }
 
-  /** A provider operation. Born PENDING; validates the reference requirement per kind. */
+  /** Uma operação de provedor. Nasce PENDING; valida a exigência de referência por kind. */
   static create(props: CreateWagerTransactionProps): WagerTransaction {
     const { kind, money, referenceExternalTransactionId } = props;
 
@@ -182,7 +182,7 @@ export class WagerTransaction {
     });
   }
 
-  /** Internal opening credit, applied in the same SQL transaction that creates the wallet. */
+  /** Crédito interno de abertura, aplicado na mesma transação SQL que cria a wallet. */
   static opening(props: { id: string; walletId: string; playerId: string; money: Money; at: Date }): WagerTransaction {
     return new WagerTransaction({
       id: props.id,
@@ -199,7 +199,7 @@ export class WagerTransaction {
     });
   }
 
-  /** Reconstruction from persistence; does not re-validate transitions. */
+  /** Reconstrução a partir da persistência; não revalida transições. */
   static rehydrate(state: WagerTransactionState): WagerTransaction {
     return new WagerTransaction(state);
   }
@@ -236,7 +236,7 @@ export class WagerTransaction {
     return this._processedAt;
   }
 
-  // ---- transitions (throw InvalidTransactionStateError from a terminal state)
+  // ---- transições (lançam InvalidTransactionStateError a partir de um estado terminal)
 
   markProcessed(referenceTransactionId: string | undefined, balanceAfter: Money, at: Date): void {
     this.assertNotTerminal("markProcessed");
@@ -251,7 +251,7 @@ export class WagerTransaction {
     this._updatedAt = at;
   }
 
-  /** Records one more failed attempt to resolve the reference and when to try again. */
+  /** Registra mais uma tentativa frustrada de resolver a referência e quando tentar de novo. */
   markPendingReference(nextAttemptAt: Date, at: Date): void {
     this.assertNotTerminal("markPendingReference");
     if (this.referenceExternalTransactionId === undefined) {
@@ -280,7 +280,7 @@ export class WagerTransaction {
     this._updatedAt = at;
   }
 
-  // ---- domain queries
+  // ---- consultas de domínio
 
   isTerminal(): boolean {
     return TERMINAL_STATUSES.has(this._status);
@@ -302,7 +302,7 @@ export class WagerTransaction {
     return this.payloadHash === payloadHash;
   }
 
-  /** Undefined for LOSS (no balance effect). ROLLBACK is the inverse of its reference. */
+  /** Undefined para LOSS (sem efeito no saldo). ROLLBACK é o inverso da referência. */
   ledgerDirectionFor(reference?: WagerTransaction): LedgerDirection | undefined {
     switch (this.kind) {
       case WagerTransactionKind.Bet:

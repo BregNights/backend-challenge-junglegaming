@@ -5,12 +5,12 @@ import type { DatabaseConfig } from "../config/app-config";
 import { migrations } from "./migrations";
 
 /**
- * Single source of ORM configuration, shared by the Nest module, the migration
- * runner and the integration tests.
+ * Fonte única da configuração do ORM, compartilhada pelo módulo Nest, pelo runner
+ * de migrations e pelos testes de integração.
  *
- * Entities and migrations are listed explicitly instead of discovered by glob:
- * discovery depends on file layout and transpiler detection, which is fragile
- * under Bun and gives nothing in return here.
+ * Entidades e migrations são listadas explicitamente em vez de descobertas por glob:
+ * a descoberta depende do layout de arquivos e da detecção do transpilador, o que é
+ * frágil sob o Bun e não traz nada em troca aqui.
  */
 export function buildOrmConfig(database: DatabaseConfig) {
   return defineConfig({
@@ -22,18 +22,18 @@ export function buildOrmConfig(database: DatabaseConfig) {
       tableName: "schema_migrations",
       transactional: true,
       allOrNothing: true,
-      // Migrations are hand-written SQL; the ORM never diffs or generates the schema.
+      // As migrations são SQL escrito à mão; o ORM nunca compara nem gera o schema.
       snapshot: false,
       snapshotOnMigrate: false,
     },
     pool: { min: 0, max: database.poolMax },
-    // Passed straight to the `pg` pool, applied to every session.
+    // Repassado direto ao pool do `pg`, aplicado a toda sessão.
     driverOptions: {
-      // A wallet lock that cannot be acquired quickly becomes a transient error
-      // (503 / SQS retry) instead of an unbounded wait.
+      // Um lock de wallet que não sai rápido vira erro transitório
+      // (503 / retry no SQS) em vez de uma espera sem limite.
       lock_timeout: database.lockTimeoutMs,
       statement_timeout: database.statementTimeoutMs,
-      // A crashed or stuck worker must not hold row locks forever.
+      // Um worker que travou ou morreu não pode segurar locks de linha para sempre.
       idle_in_transaction_session_timeout: database.idleInTransactionTimeoutMs,
       application_name: "wagering-processor",
     },

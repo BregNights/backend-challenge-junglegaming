@@ -1,6 +1,6 @@
 import { DomainError } from "./domain-error";
 
-/** Wire format: decimal string with exactly two fractional digits, ISO-4217 code. */
+/** Formato no contrato: string decimal com exatamente duas casas e código ISO-4217. */
 export interface MoneyProps {
   amount: string;
   currency: string;
@@ -8,17 +8,17 @@ export interface MoneyProps {
 
 const SCALE = 2;
 const MINOR_UNITS_PER_MAJOR = 10n ** BigInt(SCALE);
-/** Mirrors the numeric(20, 2) columns: at most 18 integer digits. */
+/** Espelha as colunas numeric(20, 2): no máximo 18 dígitos inteiros. */
 const MAX_INTEGER_DIGITS = 18;
 const MAX_MINOR_UNITS = 10n ** BigInt(MAX_INTEGER_DIGITS + SCALE) - 1n;
 
 /**
- * Non-negative, no leading zeros, exactly two decimals. Rejects by construction:
- * NaN, Infinity, scientific notation, signs, whitespace, empty strings and any
- * other scale — nothing is ever rounded.
+ * Não negativo, sem zeros à esquerda, exatamente duas casas. Rejeita por
+ * construção: NaN, Infinity, notação científica, sinais, espaços, string vazia e
+ * qualquer outra escala — nada é arredondado.
  */
 const AMOUNT_PATTERN = new RegExp(`^(0|[1-9]\\d{0,${MAX_INTEGER_DIGITS - 1}})\\.\\d{${SCALE}}$`);
-/** Same format, optionally negative: trusted values such as computed differences. */
+/** Mesmo formato, com sinal opcional: valores confiáveis, como diferenças calculadas. */
 const SIGNED_AMOUNT_PATTERN = new RegExp(`^-?(0|[1-9]\\d{0,${MAX_INTEGER_DIGITS - 1}})\\.\\d{${SCALE}}$`);
 const CURRENCY_PATTERN = /^[A-Z]{3}$/;
 
@@ -38,8 +38,8 @@ export class CurrencyMismatchError extends DomainError {
 }
 
 /**
- * Immutable monetary value. Stored as an integer number of minor units, so
- * arithmetic is exact; `number` is never involved.
+ * Valor monetário imutável. Guardado como um número inteiro de unidades menores
+ * (centavos), então a aritmética é exata; `number` nunca entra no caminho.
  */
 export class Money {
   private constructor(
@@ -50,8 +50,8 @@ export class Money {
   }
 
   /**
-   * Parses an input contract. Negative amounts are rejected here: the sign of a
-   * movement is expressed by its direction, never by the amount.
+   * Interpreta um contrato de entrada. Valores negativos são rejeitados aqui: o
+   * sinal de uma movimentação é dado pela direção, nunca pelo valor.
    */
   static from(props: MoneyProps): Money {
     const amount: unknown = props?.amount;
@@ -64,8 +64,8 @@ export class Money {
   }
 
   /**
-   * Reconstruction from persistence or other trusted sources (numeric(20, 2)
-   * columns, computed differences): same strict format, sign allowed.
+   * Reconstrução a partir da persistência ou de outras fontes confiáveis (colunas
+   * numeric(20, 2), diferenças calculadas): mesmo formato estrito, sinal permitido.
    */
   static rehydrate(props: MoneyProps): Money {
     const amount: unknown = props?.amount;
@@ -110,7 +110,7 @@ export class Money {
     return this.minorUnits < other.minorUnits;
   }
 
-  /** Values in different currencies are simply not equal. */
+  /** Valores em moedas diferentes simplesmente não são iguais. */
   equals(other: Money): boolean {
     return this.currency === other.currency && this.minorUnits === other.minorUnits;
   }
@@ -135,7 +135,7 @@ export class Money {
     return `${sign}${integerPart}.${fractionPart}`;
   }
 
-  /** Expects an amount already validated against one of the amount patterns. */
+  /** Espera um valor já validado contra um dos padrões de valor. */
   private static parseMinorUnits(amount: string): bigint {
     const negative = amount.startsWith("-");
     const [integerPart = "0", fractionPart = "0"] = (negative ? amount.slice(1) : amount).split(".");

@@ -42,7 +42,7 @@ const envelopeSchema = z.object({
 });
 type Envelope = z.infer<typeof envelopeSchema>;
 
-/** Retrying cannot fix these: the message goes to the DLQ right away. */
+/** Tentar de novo não resolve estes: a mensagem vai direto para a DLQ. */
 const PERMANENT_ERRORS = [
   ValidationError,
   InvalidMoneyError,
@@ -58,17 +58,17 @@ interface QueueUrls {
 }
 
 /**
- * Consumes `wager-transactions.fifo` with the same use case as the HTTP API.
+ * Consome `wager-transactions.fifo` com o mesmo use case da API HTTP.
  *
- * - ack (delete) only after the SQL transaction committed;
- * - business rejections are decisions: persisted and acked, never retried;
- * - transient failures: the message is handed back with exponential visibility
- *   backoff; SQS moves it to the DLQ after maxReceiveCount (redrive policy);
- * - permanent failures (invalid message, unknown wallet, conflicting payload):
- *   sent to the DLQ explicitly, then acked;
- * - messages of one group (wallet) are handled in order, groups in parallel;
- * - on shutdown, in-flight messages finish within a grace period and anything
- *   not settled is handed back immediately (visibility 0).
+ * - ack (delete) só depois do commit da transação SQL;
+ * - rejeições de negócio são decisões: persistidas e com ack, nunca retentadas;
+ * - falhas transitórias: a mensagem é devolvida com backoff exponencial de
+ *   visibilidade; o SQS a move para a DLQ depois de maxReceiveCount (redrive policy);
+ * - falhas permanentes (mensagem inválida, wallet inexistente, payload em conflito):
+ *   enviadas explicitamente para a DLQ, depois ack;
+ * - mensagens de um grupo (wallet) são tratadas em ordem, grupos em paralelo;
+ * - no shutdown, as mensagens em andamento terminam dentro de um prazo de graça e
+ *   o que não foi liquidado é devolvido na hora (visibilidade 0).
  */
 @Injectable()
 export class WagerTransactionConsumer implements OnApplicationBootstrap, BeforeApplicationShutdown {
@@ -77,7 +77,7 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, BeforeA
   private loop: Promise<void> | undefined;
   private poll: AbortController | undefined;
   private queueUrls: Promise<QueueUrls> | undefined;
-  /** Received and not yet settled with the queue (acked, retried or dead-lettered), by receipt handle. */
+  /** Recebidas e ainda não liquidadas com a fila (ack, retry ou DLQ), por receipt handle. */
   private readonly unsettled = new Map<string, Message>();
 
   constructor(
@@ -106,7 +106,7 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, BeforeA
         graceTimer = setTimeout(() => resolve(false), this.config.workers.shutdownGraceMs);
       }),
     ]);
-    // A pending timer would keep the process alive for the whole grace period.
+    // Um timer pendente manteria o processo vivo durante todo o prazo de graça.
     clearTimeout(graceTimer);
     const handedBack = [...this.unsettled.values()];
     await Promise.allSettled(handedBack.map((message) => this.release(message)));
@@ -123,7 +123,7 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, BeforeA
             QueueUrl: wager,
             MaxNumberOfMessages: 10,
             WaitTimeSeconds: this.config.sqs.receiveWaitSeconds,
-            // Both spellings: the legacy one is what some emulators still honour.
+            // As duas grafias: a legada é a que alguns emuladores ainda respeitam.
             AttributeNames: ["All"],
             MessageSystemAttributeNames: ["ApproximateReceiveCount", "MessageGroupId"],
           }),
@@ -134,14 +134,14 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, BeforeA
         }
         await this.handleBatch(Messages);
       } catch (error) {
-        if (!this.running) break; // long poll aborted by shutdown
+        if (!this.running) break; // long polling abortado pelo shutdown
         this.logger.error({ msg: "receive failed", error: describe(error) });
         await new Promise((resolve) => setTimeout(resolve, 1_000));
       }
     }
   }
 
-  /** FIFO semantics: one group (wallet) in order, different groups in parallel. */
+  /** Semântica FIFO: um grupo (wallet) em ordem, grupos diferentes em paralelo. */
   private async handleBatch(messages: Message[]): Promise<void> {
     const groups = new Map<string, Message[]>();
     for (const message of messages) {
@@ -151,7 +151,7 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, BeforeA
     await Promise.all(
       [...groups.values()].map(async (group) => {
         for (const message of group) {
-          if (!this.running) return; // not started: handed back on shutdown
+          if (!this.running) return; // não iniciada: devolvida no shutdown
           await this.handle(message);
         }
       }),
@@ -183,7 +183,7 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, BeforeA
       if (PERMANENT_ERRORS.some((type) => error instanceof type)) {
         return this.deadLetter(message, "permanent-error", describe(error), context);
       }
-      // Transient or unexpected: keep the message; the redrive policy bounds the attempts.
+      // Transitório ou inesperado: mantém a mensagem; a redrive policy limita as tentativas.
       await this.retryLater(message, error, context);
     }
   }
@@ -194,7 +194,7 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, BeforeA
       await this.sqs.send(new DeleteMessageCommand({ QueueUrl: wager, ReceiptHandle: message.ReceiptHandle }));
       this.settled(message);
     } catch (error) {
-      // Already committed: a redelivery is absorbed by the inbox.
+      // Commit já feito: uma redelivery é absorvida pela inbox.
       this.logger.warn({ msg: "ack failed after commit; redelivery will be deduplicated", ...context, error: describe(error) });
     }
   }
@@ -213,7 +213,7 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, BeforeA
         }),
       );
     } catch (visibilityError) {
-      // Falls back to the queue's visibility timeout.
+      // Fica valendo o visibility timeout da fila.
       this.logger.warn({ msg: "could not reschedule message", ...context, error: describe(visibilityError) });
     }
     this.settled(message);
@@ -246,7 +246,7 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, BeforeA
       this.metrics.messageDeadLettered(reason);
       this.logger.error({ msg: "message sent to DLQ", ...context, reason, detail });
     } catch (error) {
-      // Could not move it: keep it in the queue rather than lose it.
+      // Não foi possível movê-la: melhor mantê-la na fila do que perdê-la.
       await this.retryLater(message, error, context);
     }
   }

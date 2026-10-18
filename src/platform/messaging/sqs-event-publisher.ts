@@ -5,9 +5,9 @@ import type { OutboxMessage } from "../../messaging/domain/outbox-message";
 import { AppConfig } from "../config/app-config";
 
 /**
- * Publishes outbox messages to the events FIFO queue: MessageGroupId keeps the
- * events of one wallet in order, MessageDeduplicationId (the event id) lets SQS
- * drop republished duplicates within its deduplication window.
+ * Publica as mensagens da outbox na fila FIFO de eventos: o MessageGroupId mantém
+ * os eventos de uma wallet em ordem, e o MessageDeduplicationId (o id do evento)
+ * deixa o SQS descartar duplicatas republicadas dentro da janela de deduplicação.
  */
 @Injectable()
 export class SqsEventPublisher implements EventPublisher {

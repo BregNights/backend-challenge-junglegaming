@@ -2,10 +2,10 @@ import { addMs, type BackoffPolicy, backoffDelayMs } from "../../shared/domain/b
 import type { WagerTransaction } from "../domain/wager-transaction";
 
 /**
- * Providers usually deliver the referenced operation within seconds or minutes.
- * Retries back off from 1 s up to 5 min; after the TTL (30 min by default) the
- * dependant transaction stops waiting and is rejected (REFERENCE_NOT_FOUND),
- * instead of staying in limbo indefinitely.
+ * Provedores costumam entregar a operação referenciada em segundos ou minutos.
+ * As novas tentativas fazem backoff de 1 s até 5 min; depois do TTL (30 min por
+ * padrão) a transação dependente para de esperar e é rejeitada
+ * (REFERENCE_NOT_FOUND), em vez de ficar no limbo indefinidamente.
  */
 export class PendingReferencePolicy {
   constructor(

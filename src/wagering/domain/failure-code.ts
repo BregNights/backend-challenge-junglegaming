@@ -1,11 +1,11 @@
 /**
- * Stable, machine-readable reasons for REJECTED/FAILED transactions. Providers
- * branch on these to decide whether to resend, fix the payload or give up
- * (see ARCHITECTURE.md, "Códigos de falha").
+ * Motivos estáveis e legíveis por máquina para transações REJECTED/FAILED. O
+ * provedor decide com base neles se reenvia, corrige o payload ou desiste
+ * (ver ARCHITECTURE.md, "Códigos de falha").
  */
 export enum FailureCode {
   InsufficientFunds = "INSUFFICIENT_FUNDS",
-  /** A reversal (ROLLBACK of WIN/REFUND) would overdraw: operationally different from a BET without funds. */
+  /** Uma reversão (ROLLBACK de WIN/REFUND) deixaria o saldo negativo: operacionalmente diferente de uma BET sem saldo. */
   ReversalInsufficientFunds = "REVERSAL_INSUFFICIENT_FUNDS",
   CurrencyMismatch = "CURRENCY_MISMATCH",
   PlayerWalletMismatch = "PLAYER_WALLET_MISMATCH",
@@ -15,6 +15,6 @@ export enum FailureCode {
   ReferenceNotProcessed = "REFERENCE_NOT_PROCESSED",
   ReferenceAlreadyReversed = "REFERENCE_ALREADY_REVERSED",
   AmountMismatch = "AMOUNT_MISMATCH",
-  /** Permanent infrastructure failure, recorded for audit (FAILED status). */
+  /** Falha permanente de infraestrutura, registrada para auditoria (status FAILED). */
   ProcessingFailed = "PROCESSING_FAILED",
 }

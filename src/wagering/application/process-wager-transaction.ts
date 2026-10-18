@@ -35,7 +35,7 @@ export interface ProcessWagerTransactionCommand {
   source: ProcessingSource;
 }
 
-/** Transport message being consumed; recorded in the inbox inside the same SQL transaction. */
+/** Mensagem de transporte sendo consumida; registrada na inbox dentro da mesma transação SQL. */
 export interface InboxContext {
   consumerName: string;
   messageId: string;
@@ -48,16 +48,16 @@ export type MessageProcessingOutcome =
 
 type ProcessOutcome = { kind: "duplicate-message" } | { kind: "result"; result: WagerTransactionResult };
 
-/** Losing one of these races means a concurrent duplicate committed first. */
+/** Perder uma destas corridas significa que uma duplicata concorrente fez commit primeiro. */
 const IDEMPOTENCY_CONSTRAINTS: ReadonlySet<string> = new Set(["wager_tx_idempotency_uq", "wager_tx_external_id_uq"]);
 const MAX_RACE_ATTEMPTS = 3;
 
 /**
- * The single entry point for provider operations, shared by HTTP and SQS.
+ * O ponto de entrada único das operações de provedor, compartilhado por HTTP e SQS.
  *
- * Inside one SQL transaction: [inbox] → dedupe by idempotency key → lock the
- * wallet row → re-check under the lock → settle → persist transaction, ledger
- * entry, wallet and outbox events together. Nothing is acknowledged before the
+ * Numa única transação SQL: [inbox] → dedup pela idempotency key → lock da linha
+ * da wallet → re-checagem sob o lock → liquidação → persistência conjunta de
+ * transação, lançamento, wallet e eventos da outbox. Nada é confirmado antes do
  * commit.
  */
 @Injectable()
@@ -72,14 +72,14 @@ export class ProcessWagerTransaction {
     @Inject(PendingReferencePolicy) private readonly pendingReferences: PendingReferencePolicy,
   ) {}
 
-  /** HTTP entry point. */
+  /** Ponto de entrada HTTP. */
   async execute(command: ProcessWagerTransactionCommand): Promise<WagerTransactionResult> {
     const outcome = await this.run(command, undefined);
     if (outcome.kind !== "result") throw new Error("Unreachable: duplicate message without an inbox");
     return outcome.result;
   }
 
-  /** SQS entry point: same use case, plus inbox deduplication by (consumerName, messageId). */
+  /** Ponto de entrada SQS: o mesmo use case, mais a dedup da inbox por (consumerName, messageId). */
   async executeFromMessage(command: ProcessWagerTransactionCommand, inbox: InboxContext): Promise<MessageProcessingOutcome> {
     const outcome = await this.run(command, inbox);
     return outcome.kind === "result" ? { duplicateMessage: false, result: outcome.result } : { duplicateMessage: true };
@@ -110,8 +110,8 @@ export class ProcessWagerTransaction {
       try {
         return await this.uow.run((store) => this.process(store, command, money, payloadHash, inbox));
       } catch (error) {
-        // Same key, different wallet lock: the unique constraint picked a winner.
-        // The next attempt finds it and answers with a replay or a conflict.
+        // Mesma chave, lock de wallet diferente: a constraint única escolheu um vencedor.
+        // A próxima tentativa o encontra e responde com replay ou conflito.
         const lostIdempotencyRace =
           error instanceof UniqueConstraintConflict && IDEMPOTENCY_CONSTRAINTS.has(error.constraint ?? "");
         if (lostIdempotencyRace && attempt < MAX_RACE_ATTEMPTS) continue;
@@ -138,14 +138,14 @@ export class ProcessWagerTransaction {
       }
     }
 
-    // Fast path: a decided duplicate is answered without queueing on the wallet lock.
+    // Caminho rápido: uma duplicata já decidida é respondida sem entrar na fila do lock da wallet.
     const duplicate = await store.transactions.findByIdempotencyKey(command.providerId, command.idempotencyKey);
     if (duplicate) return { kind: "result", result: await this.replay(store, duplicate, payloadHash) };
 
     const wallet = await store.wallets.lockById(command.walletId);
     if (!wallet) throw new WalletNotFoundError(command.walletId);
 
-    // Re-check under the lock: a duplicate may have committed while we waited for it.
+    // Re-checagem sob o lock: uma duplicata pode ter feito commit enquanto esperávamos.
     const raced = await store.transactions.findByIdempotencyKey(command.providerId, command.idempotencyKey);
     if (raced) return { kind: "result", result: await this.replay(store, raced, payloadHash, wallet) };
 
@@ -172,7 +172,7 @@ export class ProcessWagerTransaction {
       createdAt: now,
     });
 
-    // The reference, if valid, lives in this wallet: the lock we hold keeps it stable.
+    // A referência, se válida, está nesta wallet: o lock que seguramos a mantém estável.
     const reference =
       transaction.referenceExternalTransactionId === undefined
         ? undefined
@@ -205,7 +205,7 @@ export class ProcessWagerTransaction {
     for (const event of eventsForSettlement(transaction, wallet, outcome, nextContext)) {
       store.outbox.add(OutboxMessage.enqueue(event));
     }
-    // Anything parked waiting for this transaction can be retried right away.
+    // O que estava parado esperando por esta transação pode ser retentado na hora.
     if (transaction.status === WagerTransactionStatus.Processed) {
       await store.transactions.expediteWaitingFor(command.providerId, command.externalTransactionId, now);
     }
@@ -222,7 +222,7 @@ export class ProcessWagerTransaction {
     };
   }
 
-  /** Same key: identical payload → the original result; anything else → conflict, never a replay. */
+  /** Mesma chave: payload idêntico → o resultado original; qualquer outro → conflito, nunca replay. */
   private async replay(
     store: TransactionalStore,
     existing: WagerTransaction,
@@ -232,7 +232,7 @@ export class ProcessWagerTransaction {
     if (!existing.matchesPayload(payloadHash)) {
       throw new IdempotencyConflictError(`Idempotency-Key ${existing.idempotencyKey} was already used with a different payload`);
     }
-    // Decided transactions answer with the balance observed back then; pending ones with today's.
+    // Transações decididas respondem com o saldo observado na época; as pendentes, com o atual.
     const balance =
       existing.balanceAfter ?? (lockedWallet ?? (await store.wallets.findById(existing.walletId)))?.balance;
     if (!balance) throw new Error(`Wallet ${existing.walletId} of transaction ${existing.id} not found`);
@@ -246,7 +246,7 @@ export class ProcessWagerTransaction {
     };
   }
 
-  /** Metrics and logs only after commit, so they never describe a rolled-back decision. */
+  /** Métricas e logs só depois do commit, para nunca descreverem uma decisão desfeita. */
   private record(command: ProcessWagerTransactionCommand, outcome: ProcessOutcome): void {
     if (outcome.kind === "duplicate-message") {
       this.metrics.duplicateDetected("inbox");

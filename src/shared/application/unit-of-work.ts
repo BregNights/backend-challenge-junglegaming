@@ -7,11 +7,11 @@ import type { Money } from "../domain/money";
 
 export interface WalletRepository {
   findById(id: string): Promise<Wallet | undefined>;
-  /** SELECT … FOR UPDATE: serializes every balance change of this wallet until commit. */
+  /** SELECT … FOR UPDATE: serializa toda alteração de saldo desta wallet até o commit. */
   lockById(id: string): Promise<Wallet | undefined>;
   findByPlayer(playerId: string, currency: string): Promise<Wallet | undefined>;
   insert(wallet: Wallet): void;
-  /** Persists balance/version of a wallet loaded through this store. */
+  /** Persiste saldo e versão de uma wallet carregada por este store. */
   update(wallet: Wallet): void;
 }
 
@@ -19,17 +19,17 @@ export interface WagerTransactionRepository {
   findById(id: string): Promise<WagerTransaction | undefined>;
   findByIdempotencyKey(providerId: string, idempotencyKey: string): Promise<WagerTransaction | undefined>;
   findByExternalId(providerId: string, externalTransactionId: string): Promise<WagerTransaction | undefined>;
-  /** Whether a PROCESSED REFUND/ROLLBACK already reverts this transaction. */
+  /** Se um REFUND/ROLLBACK PROCESSED já reverte esta transação. */
   hasProcessedReversal(referenceTransactionId: string): Promise<boolean>;
   insert(transaction: WagerTransaction): void;
   update(transaction: WagerTransaction): void;
   /**
-   * Claims due PENDING_REFERENCE transactions (FOR UPDATE SKIP LOCKED) and leases
-   * them by pushing next_attempt_at to `leaseUntil`, so concurrent workers pick
-   * disjoint sets and a crashed worker's claims expire on their own.
+   * Reivindica as transações PENDING_REFERENCE vencidas (FOR UPDATE SKIP LOCKED) e
+   * as arrenda empurrando next_attempt_at para `leaseUntil`: workers concorrentes
+   * pegam conjuntos disjuntos, e o claim de um worker que morreu expira sozinho.
    */
   claimDuePendingReferences(now: Date, leaseUntil: Date, limit: number): Promise<{ id: string; walletId: string }[]>;
-  /** Brings forward the next attempt of transactions waiting for this reference. */
+  /** Antecipa a próxima tentativa das transações que esperam por esta referência. */
   expediteWaitingFor(providerId: string, externalTransactionId: string, now: Date): Promise<void>;
 }
 
@@ -37,8 +37,8 @@ export type InboxRegistration = "new" | "duplicate" | "conflict";
 
 export interface InboxRepository {
   /**
-   * Inserts the message (ON CONFLICT DO NOTHING). "duplicate": already processed
-   * with the same payload; "conflict": same id, different payload.
+   * Insere a mensagem (ON CONFLICT DO NOTHING). "duplicate": já processada com o
+   * mesmo payload; "conflict": mesmo id, payload diferente.
    */
   register(message: InboxMessage): Promise<InboxRegistration>;
 }
@@ -51,28 +51,28 @@ export interface LedgerSummary {
 
 export interface LedgerRepository {
   insert(entry: WalletLedgerEntry): void;
-  /** Newest first. `beforeVersion` is an exclusive, stable cursor (entries are immutable). */
+  /** Mais recentes primeiro. `beforeVersion` é um cursor exclusivo e estável (lançamentos são imutáveis). */
   page(walletId: string, options: { beforeVersion?: number; limit: number }): Promise<WalletLedgerEntry[]>;
-  /** Stored balance and ledger-derived balance, read in a single statement (one snapshot). */
+  /** Saldo armazenado e saldo derivado do ledger, lidos num único comando (um snapshot). */
   summarize(walletId: string): Promise<LedgerSummary | undefined>;
 }
 
 export interface OutboxBacklog {
   pending: number;
-  /** Age of the oldest unpublished event; 0 when the outbox is empty. */
+  /** Idade do evento não publicado mais antigo; 0 quando a outbox está vazia. */
   oldestAgeSeconds: number;
 }
 
 export interface OutboxRepository {
   add(message: OutboxMessage): void;
-  /** Due unpublished messages in insertion order, row-locked with SKIP LOCKED until commit. */
+  /** Mensagens vencidas e não publicadas, em ordem de inserção, travadas com SKIP LOCKED até o commit. */
   claimDue(now: Date, limit: number): Promise<OutboxMessage[]>;
-  /** Persists the publication state (published / retry schedule) of a claimed message. */
+  /** Persiste o estado de publicação (publicada / agenda de retry) de uma mensagem reivindicada. */
   saveDeliveryState(message: OutboxMessage): Promise<void>;
   backlog(now: Date): Promise<OutboxBacklog>;
 }
 
-/** Repositories bound to one SQL transaction. */
+/** Repositórios ligados a uma transação SQL. */
 export interface TransactionalStore {
   readonly wallets: WalletRepository;
   readonly transactions: WagerTransactionRepository;
@@ -85,9 +85,9 @@ export const UNIT_OF_WORK = Symbol("UnitOfWork");
 
 export interface UnitOfWork {
   /**
-   * Runs `work` in one SQL transaction; everything registered on the store is
-   * flushed and committed together, or nothing is. Database failures surface as
-   * `TransientInfrastructureError` or `UniqueConstraintConflict`.
+   * Executa `work` numa transação SQL; tudo o que for registrado no store vai junto
+   * no flush e no commit, ou nada vai. Falhas do banco aparecem como
+   * `TransientInfrastructureError` ou `UniqueConstraintConflict`.
    */
   run<T>(work: (store: TransactionalStore) => Promise<T>): Promise<T>;
 }

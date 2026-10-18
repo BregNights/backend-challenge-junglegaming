@@ -13,7 +13,7 @@ export interface WalletState {
   updatedAt: Date;
 }
 
-/** Identifies the ledger entry a balance movement produces and the transaction behind it. */
+/** Identifica o lançamento que uma movimentação de saldo produz e a transação por trás dela. */
 export interface MovementProps {
   entryId: string;
   transactionId: string;
@@ -30,9 +30,9 @@ export class InvalidWalletOperationError extends DomainError {
 }
 
 /**
- * Aggregate root. The balance only changes through `debit`/`credit`, and each
- * change returns exactly one ledger entry, so balance and ledger cannot drift
- * apart. `version` starts at 1 and increments only when the balance changes.
+ * Aggregate root. O saldo só muda por `debit`/`credit`, e cada mudança devolve
+ * exatamente um lançamento no ledger, então saldo e ledger não têm como divergir.
+ * `version` começa em 1 e só incrementa quando o saldo muda.
  */
 export class Wallet {
   private constructor(
@@ -46,9 +46,9 @@ export class Wallet {
   ) {}
 
   /**
-   * A positive initial balance is credited through the regular path, producing
-   * the OPENING ledger entry at version 1. A zero balance opens at version 1
-   * without an entry.
+   * Um saldo inicial positivo é creditado pelo caminho normal, produzindo o
+   * lançamento OPENING na versão 1. Um saldo zero abre na versão 1 sem
+   * lançamento.
    */
   static open(props: {
     id: string;
@@ -71,7 +71,7 @@ export class Wallet {
     return { wallet, openingEntry };
   }
 
-  /** Reconstruction from persistence; does not re-validate transitions. */
+  /** Reconstrução a partir da persistência; não revalida transições. */
   static rehydrate(state: WalletState): Wallet {
     return new Wallet(state.id, state.playerId, state.currency, state.balance, state.version, state.createdAt, state.updatedAt);
   }
@@ -110,7 +110,7 @@ export class Wallet {
     const balanceBefore = this._balance;
     const balanceAfter = direction === LedgerDirection.Credit ? balanceBefore.add(money) : balanceBefore.subtract(money);
 
-    // Built before mutating: if the entry is invalid, the wallet is left untouched.
+    // Montado antes de mutar: se o lançamento for inválido, a wallet fica intacta.
     const entry = WalletLedgerEntry.create({
       id: entryId,
       walletId: this.id,

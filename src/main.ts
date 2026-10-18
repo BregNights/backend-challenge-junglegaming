@@ -7,7 +7,7 @@ import { AppConfig } from "./platform/config/app-config";
 
 const app = await NestFactory.create(AppModule, { bufferLogs: true });
 app.useLogger(app.get(Logger));
-// SIGTERM/SIGINT run the shutdown hooks (stop consumers, drain in-flight work, close pools).
+// SIGTERM/SIGINT disparam os shutdown hooks (param os consumers, drenam o trabalho em andamento e fecham os pools).
 app.enableShutdownHooks();
 
 const config = app.get(AppConfig);

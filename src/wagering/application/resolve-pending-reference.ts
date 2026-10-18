@@ -11,9 +11,9 @@ import { eventsForSettlement } from "./settlement-events";
 export type ResolutionResult = WagerTransactionStatus | "skipped";
 
 /**
- * Retries one PENDING_REFERENCE transaction: same lock order (wallet first) and
- * same settlement rules as a fresh submission. Once the waiting window is over,
- * a still-missing reference becomes REJECTED / REFERENCE_NOT_FOUND.
+ * Tenta de novo uma transação PENDING_REFERENCE: mesma ordem de lock (wallet
+ * primeiro) e mesmas regras de liquidação de uma submissão nova. Passada a janela
+ * de espera, uma referência que ainda falta vira REJECTED / REFERENCE_NOT_FOUND.
  */
 @Injectable()
 export class ResolvePendingReference {
@@ -31,7 +31,7 @@ export class ResolvePendingReference {
     const result = await this.uow.run(async (store): Promise<ResolutionResult> => {
       const wallet = await store.wallets.lockById(claim.walletId);
       const transaction = wallet ? await store.transactions.findById(claim.id) : undefined;
-      // Decided meanwhile by another worker (or it was never ours to decide).
+      // Decidida nesse meio-tempo por outro worker (ou nunca coube a nós decidir).
       if (!wallet || !transaction || transaction.status !== WagerTransactionStatus.PendingReference) return "skipped";
       const { providerId, externalTransactionId, referenceExternalTransactionId } = transaction;
       if (!providerId || !externalTransactionId || !referenceExternalTransactionId) return "skipped";
@@ -57,7 +57,7 @@ export class ResolvePendingReference {
         store.ledger.insert(outcome.ledgerEntry);
         store.wallets.update(wallet);
       }
-      // Still waiting: the PendingReference event was emitted on the first attempt only.
+      // Ainda esperando: o evento PendingReference só foi emitido na primeira tentativa.
       if (outcome.status !== WagerTransactionStatus.PendingReference) {
         const nextContext = () => ({
           eventId: this.ids.next(),
@@ -69,7 +69,7 @@ export class ResolvePendingReference {
           store.outbox.add(OutboxMessage.enqueue(event));
         }
       }
-      // Chains (ROLLBACK of a REFUND of a late BET) unblock one link at a time.
+      // Cadeias (ROLLBACK de um REFUND de uma BET atrasada) se desbloqueiam um elo por vez.
       if (outcome.status === WagerTransactionStatus.Processed) {
         await store.transactions.expediteWaitingFor(providerId, externalTransactionId, now);
       }

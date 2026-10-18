@@ -2,7 +2,7 @@ import { z } from "zod";
 import { identifierSchema, moneySchema, uuidSchema } from "../platform/http/validation";
 import { PROVIDER_KINDS } from "./domain/wager-transaction";
 
-/** Business payload of a provider operation, identical over HTTP and SQS. */
+/** Payload de negócio de uma operação de provedor, idêntico em HTTP e SQS. */
 export const wagerRequestSchema = z.object({
   providerId: identifierSchema,
   externalTransactionId: identifierSchema,

@@ -14,7 +14,7 @@ import {
 } from "../support/messaging";
 import { createWallet, submitWager, walletsDivergingFromLedger } from "../support/wagering";
 
-/** Transactional outbox against real PostgreSQL and MiniStack. */
+/** Transactional outbox contra PostgreSQL e MiniStack reais. */
 
 let orm: MikroORM;
 let sqs: SQSClient;
@@ -48,7 +48,7 @@ function publishedCount(metrics: string): number {
   return line ? Number(line.split(" ").at(-1)) : 0;
 }
 
-/** Generates outbox traffic through the API: one opening event plus two events per bet. */
+/** Gera tráfego na outbox pela API: um evento de abertura mais dois eventos por aposta. */
 async function generateEvents(wallets: number, betsPerWallet: number): Promise<void> {
   const app = await startTestApp({ ...queues.env, APP_ROLES: "api" });
   try {
@@ -84,9 +84,9 @@ describe("transactional outbox", () => {
       const perPublisher = await Promise.all(
         publishers.map(async (publisher) => publishedCount(await (await fetch(`${publisher.baseUrl}/metrics`)).text())),
       );
-      // SKIP LOCKED: disjoint batches, so nothing was published twice...
+      // SKIP LOCKED: lotes disjuntos, então nada foi publicado duas vezes...
       expect(perPublisher.reduce((sum, count) => sum + count, 0)).toBe(expected.length);
-      // ...and both instances took part.
+      // ...e as duas instâncias participaram.
       expect(perPublisher.every((count) => count > 0)).toBe(true);
     } finally {
       await Promise.all(publishers.map((publisher) => publisher.close()));
@@ -119,7 +119,7 @@ describe("transactional outbox", () => {
     expect(exitCode).not.toBe("timeout");
     expect(exitCode).not.toBe(0);
 
-    // Published, but the commit that marks them as published never happened.
+    // Publicadas, mas o commit que as marca como publicadas nunca aconteceu.
     expect(await outboxIds("pending")).toEqual(expected);
 
     const replacement = await startTestApp({ ...queues.env, APP_ROLES: "outbox-publisher", OUTBOX_POLL_INTERVAL_MS: "50" });
@@ -131,8 +131,8 @@ describe("transactional outbox", () => {
 
     const delivered = (await drainQueue(sqs, queues.urls.events)).map((message) => JSON.parse(message.Body ?? "{}"));
     const eventIds = delivered.map((envelope) => envelope.eventId);
-    // At-least-once: every event arrived; a republished copy (if SQS did not already drop it
-    // by MessageDeduplicationId) carries the same eventId, so consumers can discard it.
+    // At-least-once: todo evento chegou; uma cópia republicada (se o SQS já não a descartou
+    // pelo MessageDeduplicationId) traz o mesmo eventId, então o consumidor pode ignorá-la.
     expect(new Set(eventIds)).toEqual(new Set(expected));
     for (const id of expected) {
       const copies = delivered.filter((envelope) => envelope.eventId === id);

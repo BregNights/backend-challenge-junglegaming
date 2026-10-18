@@ -12,7 +12,7 @@ import {
   walletsDivergingFromLedger,
 } from "../support/wagering";
 
-/** End-to-end through HTTP, the real Nest application and PostgreSQL. */
+/** Ponta a ponta via HTTP, com a aplicação Nest e o PostgreSQL reais. */
 
 let orm: MikroORM;
 let testApp: TestApp;
@@ -26,7 +26,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // Final invariant of the suite: every wallet equals the balance rebuilt from its ledger.
+  // Invariante final da suíte: toda wallet é igual ao saldo reconstruído pelo seu ledger.
   if (orm) expect(await walletsDivergingFromLedger(orm)).toEqual([]);
   await testApp?.close();
   await orm?.close(true);
@@ -96,7 +96,7 @@ describe("POST /wagering/transactions", () => {
       idempotentReplay: false,
     });
     expect(await outboxEventTypes(orm, [response.body.transactionId, wallet.id])).toEqual([
-      "WalletBalanceChanged", // opening
+      "WalletBalanceChanged", // abertura
       "WagerTransactionProcessed",
       "WalletBalanceChanged",
     ]);

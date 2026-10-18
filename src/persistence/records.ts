@@ -1,10 +1,10 @@
 import { EntitySchema } from "@mikro-orm/core";
 
 /**
- * Persistence models, deliberately separate from the domain: the ORM hydrates
- * these plain records, and mappers rebuild domain objects through `rehydrate`,
- * so the ORM never bypasses domain factories. The schema itself is owned by the
- * hand-written migrations, not by these definitions.
+ * Modelos de persistência, separados do domínio de propósito: o ORM hidrata estes
+ * registros simples, e os mappers reconstroem os objetos de domínio via
+ * `rehydrate`, então o ORM nunca passa por cima das factories do domínio. O schema
+ * em si pertence às migrations escritas à mão, não a estas definições.
  */
 
 const money = { type: "decimal", precision: 20, scale: 2, runtimeType: "string" } as const;

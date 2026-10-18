@@ -4,7 +4,7 @@ import { WAGERING_METRICS } from "../../shared/application/metrics";
 import { Public } from "../auth/auth.guard";
 import { PrometheusMetrics } from "./prometheus-metrics";
 
-/** Prometheus scrape endpoint; unauthenticated like the health checks. */
+/** Endpoint de scrape do Prometheus; sem autenticação, como os health checks. */
 @Public()
 @Controller("metrics")
 class MetricsController {

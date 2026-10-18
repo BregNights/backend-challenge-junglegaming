@@ -33,9 +33,9 @@ import {
 import { LedgerEntryRecord, OutboxMessageRecord, WagerTransactionRecord, WalletRecord } from "./records";
 
 /**
- * Repositories bound to one transactional EntityManager fork. Writes are
- * registered in the Unit of Work and flushed together when the transaction
- * commits; updates are only allowed for records loaded through this store.
+ * Repositórios ligados a um fork transacional do EntityManager. As escritas são
+ * registradas no Unit of Work e vão juntas no flush do commit; updates só são
+ * permitidos para registros carregados por este store.
  */
 export class MikroOrmStore implements TransactionalStore {
   readonly wallets: WalletRepository;
@@ -63,7 +63,7 @@ class MikroOrmWalletRepository implements WalletRepository {
   }
 
   async lockById(id: string): Promise<Wallet | undefined> {
-    // refresh: always hit the database, even if the identity map already holds the row
+    // refresh: sempre vai ao banco, mesmo que o identity map já tenha a linha
     return this.track(
       await this.em.findOne(WalletRecord, { id }, { lockMode: LockMode.PESSIMISTIC_WRITE, refresh: true }),
     );
@@ -227,8 +227,8 @@ class MikroOrmOutboxRepository implements OutboxRepository {
   }
 
   async claimDue(now: Date, limit: number): Promise<OutboxMessage[]> {
-    // Ordered by the identity column: assigned at insert, under the wallet lock, so
-    // it follows commit order per wallet even across instances with skewed clocks.
+    // Ordenado pela coluna identity: atribuída no insert, sob o lock da wallet, então
+    // segue a ordem de commit por wallet mesmo entre instâncias com relógios defasados.
     const rows = await this.em.execute<OutboxRow[]>(
       `select id, aggregate_id, message_group_id, event_type, payload, occurred_at,
               attempts, next_attempt_at, published_at, last_error
@@ -287,8 +287,8 @@ class MikroOrmInboxRepository implements InboxRepository {
     );
     if (inserted.length > 0) return "new";
 
-    // A concurrent delivery of the same message blocked on the insert above until the
-    // first one committed; by now its row is visible.
+    // Uma entrega concorrente da mesma mensagem ficou bloqueada no insert acima até a
+    // primeira fazer commit; a esta altura a linha dela já está visível.
     const [existing] = await this.em.execute<{ payload_hash: string }[]>(
       `select payload_hash from inbox_messages where consumer_name = ? and message_id = ?`,
       [message.consumerName, message.messageId],

@@ -6,7 +6,7 @@ import { AppConfig } from "./config/app-config";
 export class ConfiguredFaultInjector implements FaultInjector {
   constructor(@Inject(AppConfig) private readonly config: AppConfig) {}
 
-  /** Simulates a hard crash: no shutdown hooks, no ack, no commit of an open transaction. */
+  /** Simula um crash bruto: sem shutdown hooks, sem ack, sem commit de transação aberta. */
   crashIf(point: CrashPoint): void {
     if (this.config.workers.faultInjection !== point) return;
     process.kill(process.pid, "SIGKILL");

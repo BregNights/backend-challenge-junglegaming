@@ -11,7 +11,7 @@ import { Wallet } from "../wallet/domain/wallet";
 import { WalletLedgerEntry } from "../wallet/domain/wallet-ledger-entry";
 import type { LedgerEntryRecord, OutboxMessageRecord, WagerTransactionRecord, WalletRecord } from "./records";
 
-/** numeric(20, 2) arrives as an exact decimal string; it never goes through `number`. */
+/** numeric(20, 2) chega como string decimal exata; nunca passa por `number`. */
 const money = (amount: string, currency: string) => Money.rehydrate({ amount, currency });
 const optional = <T>(value: T | null): T | undefined => (value === null ? undefined : value);
 

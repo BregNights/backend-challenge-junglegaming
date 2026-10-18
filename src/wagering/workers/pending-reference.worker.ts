@@ -12,7 +12,7 @@ import { UNIT_OF_WORK, type UnitOfWork } from "../../shared/application/unit-of-
 import { addMs } from "../../shared/domain/backoff";
 import { ResolvePendingReference } from "../application/resolve-pending-reference";
 
-/** A claim not resolved within this window (worker crashed) becomes due again. */
+/** Um claim não resolvido dentro desta janela (worker morreu) volta a ficar vencido. */
 const CLAIM_LEASE_MS = 30_000;
 
 @Injectable()
@@ -42,7 +42,7 @@ export class PendingReferenceWorker implements OnApplicationBootstrap, BeforeApp
     await this.loop?.stop();
   }
 
-  /** Claims a batch (short transaction), then resolves each claim in its own transaction. */
+  /** Reivindica um lote (transação curta) e resolve cada claim na própria transação. */
   async tick(): Promise<boolean> {
     const now = this.clock.now();
     const batchSize = this.config.workers.pendingReferenceBatchSize;
@@ -54,7 +54,7 @@ export class PendingReferenceWorker implements OnApplicationBootstrap, BeforeApp
       try {
         await this.resolve.execute(claim);
       } catch (error) {
-        // The lease expires and the claim is retried on a later tick.
+        // O lease expira e o claim é retentado num tick posterior.
         this.logger.warn({
           msg: "pending reference resolution failed",
           transactionId: claim.id,

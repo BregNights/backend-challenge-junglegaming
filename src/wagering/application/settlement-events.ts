@@ -9,7 +9,7 @@ import {
 import type { SettlementOutcome } from "../domain/wager-settlement";
 import { type WagerTransaction, WagerTransactionStatus } from "../domain/wager-transaction";
 
-/** Integration events produced by one settlement; each gets its own context (and event id). */
+/** Eventos de integração produzidos por uma liquidação; cada um recebe seu próprio contexto (e event id). */
 export function eventsForSettlement(
   transaction: WagerTransaction,
   wallet: Wallet,

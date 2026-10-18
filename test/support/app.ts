@@ -11,8 +11,8 @@ export interface TestApp {
 }
 
 /**
- * Environment for an application instance under test. Only the API role runs
- * unless a test asks for workers, so no instance ever polls queues it does not own.
+ * Ambiente de uma instância da aplicação sob teste. Só o papel de API roda, a menos
+ * que o teste peça workers, para que nenhuma instância consuma filas que não são dela.
  */
 export function testEnvironment(overrides: Record<string, string> = {}): Record<string, string> {
   return {
@@ -28,10 +28,10 @@ export function testEnvironment(overrides: Record<string, string> = {}): Record<
   };
 }
 
-/** Boots the real application (all modules, real Postgres) on a random port. */
+/** Sobe a aplicação real (todos os módulos, Postgres real) numa porta aleatória. */
 export async function startTestApp(overrides: Record<string, string> = {}): Promise<TestApp> {
   Object.assign(process.env, testEnvironment(overrides));
-  // Variables a previous test file may have set must not leak into this instance.
+  // Variáveis que um arquivo de teste anterior tenha definido não podem vazar para esta instância.
   for (const name of ["FAULT_INJECTION"]) if (!(name in overrides)) delete process.env[name];
 
   const app = await NestFactory.create(AppModule, { logger: false });

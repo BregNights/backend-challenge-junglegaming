@@ -59,8 +59,8 @@ interface InvariantRow {
 }
 
 /**
- * The final invariant of every test: wallet.balance == balance rebuilt from the
- * ledger, for every wallet in the database. Returns the offending wallets.
+ * A invariante final de todo teste: wallet.balance == saldo reconstruído pelo
+ * ledger, para todas as wallets do banco. Devolve as wallets que a violam.
  */
 export async function walletsDivergingFromLedger(orm: MikroORM): Promise<InvariantRow[]> {
   return orm.em.fork().execute<InvariantRow[]>(

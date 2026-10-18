@@ -7,7 +7,7 @@ import { NoAuthProviderIdentity } from "./no-auth.provider-identity";
 @Global()
 @Module({
   providers: [
-    // Swap for an OIDC adapter (Keycloak/Zitadel JWT verification) to turn authentication on.
+    // Troque por um adaptador OIDC (validação de JWT do Keycloak/Zitadel) para ligar a autenticação.
     { provide: PROVIDER_IDENTITY, useClass: NoAuthProviderIdentity },
     { provide: APP_GUARD, useClass: AuthGuard },
   ],

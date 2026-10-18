@@ -16,8 +16,8 @@ export interface OpenWalletCommand {
 }
 
 /**
- * Creates a wallet. A positive initial balance is booked as an internal OPENING
- * transaction with its CREDIT ledger entry, in the same SQL transaction.
+ * Cria uma wallet. Um saldo inicial positivo é registrado como uma transação
+ * interna OPENING, com o lançamento CREDIT no ledger, na mesma transação SQL.
  */
 @Injectable()
 export class OpenWallet {
@@ -66,7 +66,7 @@ export class OpenWallet {
         return toWalletView(wallet);
       });
     } catch (error) {
-      // Two concurrent creations both passed the existence check; the unique constraint picked one.
+      // Duas criações concorrentes passaram pela checagem de existência; a constraint única escolheu uma.
       if (error instanceof UniqueConstraintConflict && error.constraint === "wallets_player_currency_uq") {
         throw new WalletAlreadyExistsError(command.playerId, initialBalance.currency);
       }

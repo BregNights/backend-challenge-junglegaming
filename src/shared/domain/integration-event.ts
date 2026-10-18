@@ -7,7 +7,7 @@ export interface IntegrationEventProps<T> {
   data: T;
 }
 
-/** Everything an event needs besides its payload; built by the use case that emits it. */
+/** Tudo o que um evento precisa além do payload; montado pelo use case que o emite. */
 export interface EventContext {
   eventId: string;
   correlationId: string;
@@ -27,9 +27,9 @@ export interface IntegrationEventEnvelope<T> {
 }
 
 /**
- * Versioned integration event. `eventType` and `version` live in each subclass,
- * never as loose strings at call sites; `data` must be plain JSON (money as
- * `MoneyProps`), so the serialized envelope is stable and versionable.
+ * Evento de integração versionado. `eventType` e `version` ficam em cada subclasse,
+ * nunca como strings soltas no call site; `data` precisa ser JSON puro (dinheiro
+ * como `MoneyProps`), para que o envelope serializado seja estável e versionável.
  */
 export abstract class IntegrationEvent<T> {
   abstract readonly eventType: string;
@@ -51,10 +51,10 @@ export abstract class IntegrationEvent<T> {
     this.data = Object.freeze({ ...props.data });
   }
 
-  /** Ordering key for the broker (SQS MessageGroupId): events of one wallet stay in order. */
+  /** Chave de ordenação para o broker (MessageGroupId do SQS): eventos de uma wallet ficam em ordem. */
   abstract get partitionKey(): string;
 
-  /** Envelope serialized into the outbox payload. */
+  /** Envelope serializado no payload da outbox. */
   toJSON(): IntegrationEventEnvelope<T> {
     return {
       eventId: this.eventId,

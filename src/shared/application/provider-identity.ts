@@ -1,25 +1,25 @@
 import { ProviderForbiddenError } from "./errors";
 
 /**
- * Who is calling. `unrestricted` is what the no-op adapter returns (and what an
- * operator/back-office identity would be); `provider` is a game provider
- * authenticated by the identity provider, allowed to act only on its own data.
+ * Quem está chamando. `unrestricted` é o que o adaptador no-op devolve (e o que
+ * seria uma identidade de operador/back-office); `provider` é um provedor de jogos
+ * autenticado pelo identity provider, que só pode agir sobre os próprios dados.
  */
 export type Caller = { kind: "unrestricted" } | { kind: "provider"; providerId: string };
 
 export const PROVIDER_IDENTITY = Symbol("ProviderIdentityPort");
 
 /**
- * Extension point for authentication. The adapter bound today authenticates
- * nobody (see ARCHITECTURE.md, "Autenticação"); an OIDC adapter (Keycloak,
- * Zitadel...) would verify the bearer token here, and nothing else changes.
+ * Ponto de extensão da autenticação. O adaptador ligado hoje não autentica
+ * ninguém (ver ARCHITECTURE.md, "Autenticação"); um adaptador OIDC (Keycloak,
+ * Zitadel...) validaria o bearer token aqui, e nada mais muda.
  */
 export interface ProviderIdentityPort {
-  /** Resolves the caller from the request credentials; throws UnauthenticatedError when they are missing or invalid. */
+  /** Resolve o caller a partir das credenciais da requisição; lança UnauthenticatedError se estiverem ausentes ou inválidas. */
   authenticate(credentials: { authorization?: string }): Promise<Caller>;
 }
 
-/** Domain rule: an authenticated provider may only submit and read its own operations. */
+/** Regra de domínio: um provedor autenticado só pode submeter e consultar as próprias operações. */
 export function assertCallerMayActAs(caller: Caller | undefined, providerId: string | undefined): void {
   if (caller?.kind === "provider" && caller.providerId !== providerId) {
     throw new ProviderForbiddenError(`Provider ${caller.providerId} cannot act on behalf of ${providerId ?? "another party"}`);
