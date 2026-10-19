@@ -11,6 +11,9 @@ x-app-env: &app-env
   AWS_ACCESS_KEY_ID: test
   AWS_SECRET_ACCESS_KEY: test
   LOG_LEVEL: info
+  # Ajustáveis sem editar o arquivo (usados nos experimentos de docs/LOAD_TEST.md).
+  SQS_CONSUMER_CONCURRENCY: ${SQS_CONSUMER_CONCURRENCY:-2}
+  OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-100}
 
 services:
   postgres:

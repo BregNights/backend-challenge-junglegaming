@@ -18,11 +18,13 @@ export interface SqsConfig {
   readonly eventsQueueName: string;
   readonly maxReceiveCount: number;
   readonly visibilityTimeoutSeconds: number;
-  /** Espera do long polling do consumer (20 s em produção, menos nos testes). */
+  /** Espera do long polling do consumer (5 s por padrão, sempre abaixo do prazo de graça do shutdown). */
   readonly receiveWaitSeconds: number;
   /** Backoff de visibilidade após falha transitória: base · 2^(receiveCount − 1), com teto. */
   readonly retryBaseSeconds: number;
   readonly retryMaxSeconds: number;
+  /** Loops de recebimento por réplica: mais grupos FIFO (wallets) processados em paralelo. */
+  readonly consumerConcurrency: number;
 }
 
 export interface WorkersConfig {
@@ -87,15 +89,19 @@ export class AppConfig {
         eventsQueueName: reader.string("SQS_EVENTS_QUEUE", "wallet-events.fifo"),
         maxReceiveCount: reader.int("SQS_MAX_RECEIVE_COUNT", 5),
         visibilityTimeoutSeconds: reader.int("SQS_VISIBILITY_TIMEOUT_SECONDS", 30),
-        receiveWaitSeconds: reader.int("SQS_RECEIVE_WAIT_SECONDS", 20, { max: 20 }),
+        // Abaixo do prazo de graça do shutdown, que espera os pollings em vez de abortá-los.
+        receiveWaitSeconds: reader.int("SQS_RECEIVE_WAIT_SECONDS", 5, { max: 20 }),
         retryBaseSeconds: reader.int("SQS_RETRY_BASE_SECONDS", 2),
         retryMaxSeconds: reader.int("SQS_RETRY_MAX_SECONDS", 300),
+        // 2 foi o melhor ponto medido no teste de carga (docs/LOAD_TEST.md); acima disso há mais
+        // transações concorrentes do que conexões no pool.
+        consumerConcurrency: reader.int("SQS_CONSUMER_CONCURRENCY", 2, { min: 1, max: 32 }),
       },
       {
         shutdownGraceMs: reader.int("SHUTDOWN_GRACE_MS", 10_000),
         outboxPollIntervalMs: reader.int("OUTBOX_POLL_INTERVAL_MS", 500),
-        // O SendMessageBatch aceita no máximo 10 entradas.
-        outboxBatchSize: reader.int("OUTBOX_BATCH_SIZE", 10, { min: 1, max: 10 }),
+        // Eventos reivindicados por transação; o adapter publica em chamadas paralelas de até 10.
+        outboxBatchSize: reader.int("OUTBOX_BATCH_SIZE", 100, { min: 1, max: 1_000 }),
         pendingReferencePollIntervalMs: reader.int("PENDING_REFERENCE_POLL_INTERVAL_MS", 1_000),
         pendingReferenceBatchSize: reader.int("PENDING_REFERENCE_BATCH_SIZE", 20),
         pendingReferenceTtlMs: reader.int("PENDING_REFERENCE_TTL_MS", 30 * 60_000),

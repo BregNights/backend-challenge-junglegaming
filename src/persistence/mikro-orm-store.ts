@@ -262,12 +262,22 @@ class MikroOrmOutboxRepository implements OutboxRepository {
     );
   }
 
+  async markPublished(ids: readonly string[], at: Date): Promise<void> {
+    if (ids.length === 0) return;
+    await this.em.execute(
+      `update outbox_messages set published_at = ?, last_error = null where id in (${ids.map(() => "?").join(", ")})`,
+      [at, ...ids],
+    );
+  }
+
   async backlog(now: Date): Promise<OutboxBacklog> {
+    // As duas subconsultas usam o índice parcial: a contagem varre só as pendentes, e o
+    // evento mais antigo é o primeiro na ordem de sequence.
     const [row] = await this.em.execute<{ pending: number; oldest_age_seconds: number | string | null }[]>(
-      `select count(*)::int as pending,
-              coalesce(extract(epoch from (?::timestamptz - min(occurred_at))), 0)::float8 as oldest_age_seconds
-         from outbox_messages
-        where published_at is null`,
+      `select (select count(*)::int from outbox_messages where published_at is null) as pending,
+              coalesce(extract(epoch from (?::timestamptz - (
+                select occurred_at from outbox_messages where published_at is null order by sequence limit 1
+              ))), 0)::float8 as oldest_age_seconds`,
       [now],
     );
     return { pending: Number(row?.pending ?? 0), oldestAgeSeconds: Math.max(0, Number(row?.oldest_age_seconds ?? 0)) };

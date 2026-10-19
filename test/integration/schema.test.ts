@@ -218,11 +218,47 @@ describe("migrations", () => {
 
     expect(await objects()).toEqual({ tables: "5", functions: "6" });
 
-    await orm.migrator.down();
+    await orm.migrator.down({ to: 0 });
     expect(await objects()).toEqual({ tables: "0", functions: "0" });
 
     await orm.migrator.up();
     expect(await objects()).toEqual({ tables: "5", functions: "6" });
+  });
+
+  test("each migration reverts on its own: the outbox claim index goes back and forth", async () => {
+    const outboxIndexes = async () =>
+      (
+        await query<{ indexname: string }>(
+          `select indexname from pg_indexes where tablename = 'outbox_messages' and indexname like 'outbox_messages_%idx' order by 1`,
+        )
+      ).map((row) => row.indexname);
+
+    expect(await outboxIndexes()).toEqual(["outbox_messages_unpublished_idx"]);
+    await orm.migrator.down();
+    expect(await outboxIndexes()).toEqual(["outbox_messages_pending_idx"]);
+    await orm.migrator.up();
+    expect(await outboxIndexes()).toEqual(["outbox_messages_unpublished_idx"]);
+  });
+
+  test("the outbox claim walks only unpublished rows, whatever the history size", async () => {
+    // Um histórico grande de eventos publicados é exatamente o que tornava o claim caro.
+    await commit([
+      `insert into outbox_messages (id, aggregate_id, message_group_id, event_type, payload, occurred_at, next_attempt_at, published_at)
+       select gen_random_uuid(), gen_random_uuid(), 'g', 'Test', '{}'::jsonb, now(), now(), now()
+         from generate_series(1, 20000)`,
+    ]);
+    await query("analyze outbox_messages");
+
+    const plan = (
+      await query<{ "QUERY PLAN": string }>(
+        `explain select id from outbox_messages
+          where published_at is null and next_attempt_at <= now()
+          order by sequence limit 100 for update skip locked`,
+      )
+    )
+      .map((row) => row["QUERY PLAN"])
+      .join("\n");
+    expect(plan).toContain("outbox_messages_unpublished_idx");
   });
 });
 

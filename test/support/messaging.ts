@@ -42,6 +42,7 @@ export async function createTestQueues(
     receiveWaitSeconds: 1,
     retryBaseSeconds: 1,
     retryMaxSeconds: 4,
+    consumerConcurrency: 2,
   };
   const urls = await provisionQueues(sqs, config);
   return {

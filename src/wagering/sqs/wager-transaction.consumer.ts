@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   ChangeMessageVisibilityCommand,
+  DeleteMessageBatchCommand,
   DeleteMessageCommand,
   GetQueueUrlCommand,
   type Message,
@@ -66,16 +67,19 @@ interface QueueUrls {
  *   visibilidade; o SQS a move para a DLQ depois de maxReceiveCount (redrive policy);
  * - falhas permanentes (mensagem inválida, wallet inexistente, payload em conflito):
  *   enviadas explicitamente para a DLQ, depois ack;
- * - mensagens de um grupo (wallet) são tratadas em ordem, grupos em paralelo;
- * - no shutdown, as mensagens em andamento terminam dentro de um prazo de graça e
- *   o que não foi liquidado é devolvido na hora (visibilidade 0).
+ * - mensagens de um grupo (wallet) são tratadas em ordem, grupos em paralelo, com
+ *   vários loops de recebimento por réplica (SQS_CONSUMER_CONCURRENCY) e ack em lote;
+ * - no shutdown, os long pollings em andamento terminam (em vez de serem abortados),
+ *   as mensagens em andamento terminam dentro de um prazo de graça e o que não foi
+ *   liquidado é devolvido na hora (visibilidade 0).
  */
 @Injectable()
 export class WagerTransactionConsumer implements OnApplicationBootstrap, BeforeApplicationShutdown {
   private readonly logger = new Logger(WagerTransactionConsumer.name);
   private running = false;
-  private loop: Promise<void> | undefined;
-  private poll: AbortController | undefined;
+  private loops: Promise<void>[] = [];
+  /** Long pollings em andamento, um por loop, para o shutdown abortar. */
+  private readonly polls = new Set<AbortController>();
   private queueUrls: Promise<QueueUrls> | undefined;
   /** Recebidas e ainda não liquidadas com a fila (ack, retry ou DLQ), por receipt handle. */
   private readonly unsettled = new Map<string, Message>();
@@ -91,23 +95,31 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, BeforeA
   onApplicationBootstrap(): void {
     if (!this.config.runs("sqs-consumer")) return;
     this.running = true;
-    this.loop = this.run();
+    // Vários loops por réplica: mais grupos FIFO (wallets) em andamento ao mesmo tempo. O
+    // SQS não entrega mensagens de um grupo com mensagem em voo a outro receptor.
+    this.loops = Array.from({ length: this.config.sqs.consumerConcurrency }, () => this.run());
   }
 
   async beforeApplicationShutdown(): Promise<void> {
-    if (!this.loop) return;
+    if (this.loops.length === 0) return;
+    // Os long pollings em andamento terminam sozinhos (SQS_RECEIVE_WAIT_SECONDS fica abaixo
+    // do prazo de graça) e o que eles trouxerem é devolvido abaixo. Abortar um polling não
+    // é seguro: o servidor pode já ter entregado mensagens a ele, que ficariam invisíveis
+    // até o visibility timeout sem que tivéssemos os receipt handles para devolvê-las.
     this.running = false;
-    this.poll?.abort();
 
     let graceTimer: ReturnType<typeof setTimeout> | undefined;
     const drained = await Promise.race([
-      this.loop.then(() => true),
+      Promise.all(this.loops).then(() => true),
       new Promise<boolean>((resolve) => {
         graceTimer = setTimeout(() => resolve(false), this.config.workers.shutdownGraceMs);
       }),
     ]);
     // Um timer pendente manteria o processo vivo durante todo o prazo de graça.
     clearTimeout(graceTimer);
+    // Último recurso, só se o prazo estourou: o que um polling abortado tiver recebido volta
+    // à fila depois do visibility timeout (atrasa, mas não se perde).
+    if (!drained) for (const poll of this.polls) poll.abort();
     const handedBack = [...this.unsettled.values()];
     await Promise.allSettled(handedBack.map((message) => this.release(message)));
     this.logger.log({ msg: "consumer stopped", drained, handedBack: handedBack.length });
@@ -115,9 +127,10 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, BeforeA
 
   private async run(): Promise<void> {
     while (this.running) {
+      const poll = new AbortController();
+      this.polls.add(poll);
       try {
         const { wager } = await this.urls();
-        this.poll = new AbortController();
         const { Messages = [] } = await this.sqs.send(
           new ReceiveMessageCommand({
             QueueUrl: wager,
@@ -127,7 +140,7 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, BeforeA
             AttributeNames: ["All"],
             MessageSystemAttributeNames: ["ApproximateReceiveCount", "MessageGroupId"],
           }),
-          { abortSignal: this.poll.signal },
+          { abortSignal: poll.signal },
         );
         for (const message of Messages) {
           if (message.ReceiptHandle) this.unsettled.set(message.ReceiptHandle, message);
@@ -137,33 +150,42 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, BeforeA
         if (!this.running) break; // long polling abortado pelo shutdown
         this.logger.error({ msg: "receive failed", error: describe(error) });
         await new Promise((resolve) => setTimeout(resolve, 1_000));
+      } finally {
+        this.polls.delete(poll);
       }
     }
   }
 
-  /** Semântica FIFO: um grupo (wallet) em ordem, grupos diferentes em paralelo. */
+  /**
+   * Semântica FIFO: um grupo (wallet) em ordem, grupos diferentes em paralelo. As
+   * mensagens cujo commit aconteceu recebem ack juntas, num DeleteMessageBatch.
+   */
   private async handleBatch(messages: Message[]): Promise<void> {
     const groups = new Map<string, Message[]>();
     for (const message of messages) {
       const group = message.Attributes?.MessageGroupId ?? message.MessageId ?? "";
       groups.set(group, [...(groups.get(group) ?? []), message]);
     }
+    const committed: Message[] = [];
     await Promise.all(
       [...groups.values()].map(async (group) => {
         for (const message of group) {
           if (!this.running) return; // não iniciada: devolvida no shutdown
-          await this.handle(message);
+          if ((await this.handle(message)) === "committed") committed.push(message);
         }
       }),
     );
+    await this.ackBatch(committed);
   }
 
-  private async handle(message: Message): Promise<void> {
+  /** "committed": processada e aguardando ack; "settled": já resolvida com a fila (retry ou DLQ). */
+  private async handle(message: Message): Promise<"committed" | "settled"> {
     let envelope: Envelope;
     try {
       envelope = parseInput(envelopeSchema, JSON.parse(message.Body ?? ""), "message");
     } catch (error) {
-      return this.deadLetter(message, "invalid-message", describe(error), {});
+      await this.deadLetter(message, "invalid-message", describe(error), {});
+      return "settled";
     }
 
     const { idempotencyKey, ...data } = envelope.data;
@@ -178,25 +200,36 @@ export class WagerTransactionConsumer implements OnApplicationBootstrap, BeforeA
         },
       );
       this.faults.crashIf("crash-after-commit");
-      await this.ack(message, context);
+      return "committed";
     } catch (error) {
       if (PERMANENT_ERRORS.some((type) => error instanceof type)) {
-        return this.deadLetter(message, "permanent-error", describe(error), context);
+        await this.deadLetter(message, "permanent-error", describe(error), context);
+        return "settled";
       }
       // Transitório ou inesperado: mantém a mensagem; a redrive policy limita as tentativas.
       await this.retryLater(message, error, context);
+      return "settled";
     }
   }
 
-  private async ack(message: Message, context: Record<string, string>): Promise<void> {
+  /** Ack em lote, só de mensagens com commit feito. Uma falha aqui vira redelivery, absorvida pela inbox. */
+  private async ackBatch(messages: Message[]): Promise<void> {
+    if (messages.length === 0) return;
     try {
       const { wager } = await this.urls();
-      await this.sqs.send(new DeleteMessageCommand({ QueueUrl: wager, ReceiptHandle: message.ReceiptHandle }));
-      this.settled(message);
+      const response = await this.sqs.send(
+        new DeleteMessageBatchCommand({
+          QueueUrl: wager,
+          Entries: messages.map((message, index) => ({ Id: String(index), ReceiptHandle: message.ReceiptHandle })),
+        }),
+      );
+      for (const entry of response.Failed ?? []) {
+        this.logger.warn({ msg: "ack failed after commit; redelivery will be deduplicated", code: entry.Code, detail: entry.Message });
+      }
     } catch (error) {
-      // Commit já feito: uma redelivery é absorvida pela inbox.
-      this.logger.warn({ msg: "ack failed after commit; redelivery will be deduplicated", ...context, error: describe(error) });
+      this.logger.warn({ msg: "ack failed after commit; redelivery will be deduplicated", count: messages.length, error: describe(error) });
     }
+    for (const message of messages) this.settled(message);
   }
 
   private async retryLater(message: Message, error: unknown, context: Record<string, string>): Promise<void> {

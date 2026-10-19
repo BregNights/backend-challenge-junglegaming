@@ -18,11 +18,20 @@
  * Configuração por variáveis de ambiente (valores padrão entre parênteses):
  *   LOAD_TARGETS (http://localhost:3000,3001,3002), LOAD_DURATION_S (20),
  *   LOAD_WARMUP_S (3), LOAD_CONCURRENCY (64), LOAD_WALLETS (200),
- *   LOAD_SQS_MESSAGES (2000), LOAD_SQS_WALLETS (50), AWS_ENDPOINT_URL, SQS_WAGER_QUEUE.
+ *   LOAD_SQS_MESSAGES (2000), LOAD_SQS_WALLETS (50), LOAD_DRAIN_TIMEOUT_S (300),
+ *   LOAD_SCENARIOS (distribuido,disputada,sqs), AWS_ENDPOINT_URL, SQS_WAGER_QUEUE, SQS_EVENTS_QUEUE.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { cpus, platform, release, totalmem } from "node:os";
-import { GetQueueUrlCommand, SendMessageBatchCommand, SQSClient } from "@aws-sdk/client-sqs";
+import {
+  DeleteMessageBatchCommand,
+  GetQueueAttributesCommand,
+  GetQueueUrlCommand,
+  PurgeQueueCommand,
+  ReceiveMessageCommand,
+  SendMessageBatchCommand,
+  SQSClient,
+} from "@aws-sdk/client-sqs";
 
 const config = {
   targets: (process.env.LOAD_TARGETS ?? "http://localhost:3000,http://localhost:3001,http://localhost:3002")
@@ -37,8 +46,11 @@ const config = {
   sqsWallets: Number(process.env.LOAD_SQS_WALLETS ?? 50),
   sqsEndpoint: process.env.AWS_ENDPOINT_URL ?? "http://localhost:4566",
   sqsQueue: process.env.SQS_WAGER_QUEUE ?? "wager-transactions.fifo",
+  eventsQueue: process.env.SQS_EVENTS_QUEUE ?? "wallet-events.fifo",
   /** Quanto esperar a outbox zerar depois de cada cenário, antes do próximo começar. */
   drainTimeoutMs: Number(process.env.LOAD_DRAIN_TIMEOUT_S ?? 300) * 1_000,
+  /** Cenários a rodar: distribuido, disputada, sqs. */
+  scenarios: (process.env.LOAD_SCENARIOS ?? "distribuido,disputada,sqs").split(",").map((scenario) => scenario.trim()),
 };
 
 const PROVIDER = "load-provider";
@@ -71,6 +83,8 @@ interface OutboxObservation {
   /** Eventos publicados do início do cenário até a outbox zerar, e a vazão média de publicação. */
   published: number;
   publishRate: number;
+  /** Profundidade máxima da fila de eventos, mantida baixa pelo consumidor de descarte. */
+  eventsQueueMaxDepth: number;
 }
 
 interface ScenarioResult {
@@ -172,12 +186,74 @@ function serverMeanMs(before: string[], after: string[], source: string): number
 
 const publishedEvents = (texts: string[]) => sumMetric(texts, "wagering_outbox_deliveries_total", { result: "published" });
 
+// ------------------------------------------------------- fila de eventos (descarte)
+
+const sqs = new SQSClient({
+  region: "us-east-1",
+  endpoint: config.sqsEndpoint,
+  credentials: { accessKeyId: "test", secretAccessKey: "test" },
+});
+
+const queueUrlOf = async (name: string) => {
+  const { QueueUrl } = await sqs.send(new GetQueueUrlCommand({ QueueName: name }));
+  if (!QueueUrl) throw new Error(`fila ${name} não encontrada`);
+  return QueueUrl;
+};
+
+/**
+ * Consumidor de descarte da fila de eventos. Este serviço não consome os próprios
+ * eventos (isso é papel de sistemas downstream), e o MiniStack fica mais lento
+ * quanto mais profunda a fila: o custo de envio cresce linearmente com a
+ * profundidade (ver docs/LOAD_TEST.md). Purgar a fila antes de cada cenário e
+ * drená-la durante a carga imita um consumidor downstream que acompanha o ritmo e
+ * evita que um artefato do emulador limite a vazão da outbox.
+ */
+async function startEventsSink() {
+  const queueUrl = await queueUrlOf(config.eventsQueue);
+  await sqs.send(new PurgeQueueCommand({ QueueUrl: queueUrl })).catch((error) => {
+    console.warn(`  (não foi possível purgar ${config.eventsQueue}: ${error instanceof Error ? error.message : error})`);
+  });
+
+  let running = true;
+  let maxDepth = 0;
+  const drain = async () => {
+    while (running) {
+      const { Messages = [] } = await sqs.send(new ReceiveMessageCommand({ QueueUrl: queueUrl, MaxNumberOfMessages: 10, WaitTimeSeconds: 1 }));
+      if (Messages.length === 0) continue;
+      await sqs.send(
+        new DeleteMessageBatchCommand({
+          QueueUrl: queueUrl,
+          Entries: Messages.map((message, index) => ({ Id: String(index), ReceiptHandle: message.ReceiptHandle })),
+        }),
+      );
+    }
+  };
+  const watchDepth = async () => {
+    while (running) {
+      const { Attributes } = await sqs.send(
+        new GetQueueAttributesCommand({ QueueUrl: queueUrl, AttributeNames: ["ApproximateNumberOfMessages"] }),
+      );
+      maxDepth = Math.max(maxDepth, Number(Attributes?.ApproximateNumberOfMessages ?? 0));
+      await Bun.sleep(1_000);
+    }
+  };
+  const tasks = [...Array.from({ length: 8 }, drain), watchDepth()];
+
+  return {
+    async stop(): Promise<number> {
+      running = false;
+      await Promise.all(tasks);
+      return maxDepth;
+    },
+  };
+}
+
 /**
  * Amostra o backlog da outbox a cada 500 ms enquanto a carga roda; ao final,
  * continua amostrando até a outbox zerar (o próximo cenário só começa com ela
  * vazia) e calcula a vazão média de publicação do período.
  */
-function startOutboxSampler(before: string[]) {
+function startOutboxSampler(before: string[], sink: Awaited<ReturnType<typeof startEventsSink>>) {
   const startedAt = performance.now();
   let maxPending = 0;
   let maxLagSeconds = 0;
@@ -212,13 +288,8 @@ function startOutboxSampler(before: string[]) {
         await Bun.sleep(250);
       }
       const published = publishedEvents(await scrapeAll()) - publishedEvents(before);
-      return {
-        maxPending,
-        maxLagSeconds,
-        drainMs,
-        published,
-        publishRate: published / ((performance.now() - startedAt) / 1_000),
-      };
+      const publishRate = published / ((performance.now() - startedAt) / 1_000);
+      return { maxPending, maxLagSeconds, drainMs, published, publishRate, eventsQueueMaxDepth: await sink.stop() };
     },
   };
 }
@@ -262,7 +333,7 @@ async function runHttpScenario(
 ): Promise<ScenarioResult> {
   console.log(`\n▶ ${name}: ${config.concurrency} usuários virtuais, ${config.warmupMs / 1000}s de aquecimento + ${config.durationMs / 1000}s medidos`);
   const before = await scrapeAll();
-  const sampler = startOutboxSampler(before);
+  const sampler = startOutboxSampler(before, await startEventsSink());
   const samples: Sample[] = [];
 
   const start = performance.now();
@@ -337,12 +408,7 @@ function summarize(
 
 async function runSqsScenario(wallets: Wallet[]): Promise<ScenarioResult> {
   console.log(`\n▶ sqs: ${config.sqsMessages} mensagens em ${wallets.length} wallets (grupos FIFO)`);
-  const sqs = new SQSClient({
-    region: "us-east-1",
-    endpoint: config.sqsEndpoint,
-    credentials: { accessKeyId: "test", secretAccessKey: "test" },
-  });
-  const { QueueUrl } = await sqs.send(new GetQueueUrlCommand({ QueueName: config.sqsQueue }));
+  const QueueUrl = await queueUrlOf(config.sqsQueue);
 
   const before = await scrapeAll();
   const baseline = sumMetric(before, "wagering_transactions_total", { source: "sqs" });
@@ -361,7 +427,7 @@ async function runSqsScenario(wallets: Wallet[]): Promise<ScenarioResult> {
     };
   });
 
-  const sampler = startOutboxSampler(before);
+  const sampler = startOutboxSampler(before, await startEventsSink());
   const sentAt = new Map<string, number>();
   const firstSend = Date.now();
   const batches = Array.from({ length: Math.ceil(messages.length / 10) }, (_, i) => messages.slice(i * 10, i * 10 + 10));
@@ -392,8 +458,6 @@ async function runSqsScenario(wallets: Wallet[]): Promise<ScenarioResult> {
   const completedAt = Date.now();
   const outbox = await sampler.finish();
   const after = await scrapeAll();
-  sqs.destroy();
-
   // Latência ponta a ponta de cada mensagem: do envio à fila até o processedAt gravado.
   const latencies = (
     await mapConcurrent(messages, 32, async (message) => {
@@ -478,11 +542,11 @@ function renderMarkdown(env: ReturnType<typeof environment>, results: ScenarioRe
     "",
     "### Outbox",
     "",
-    "| Cenário | Pendente (máx) | Lag (máx) | Drenagem após a carga | Eventos publicados | Vazão média de publicação |",
-    "|---|---|---|---|---|---|",
+    "| Cenário | Pendente (máx) | Lag (máx) | Drenagem após a carga | Eventos publicados | Vazão média de publicação | Fila de eventos (máx) |",
+    "|---|---|---|---|---|---|---|",
     ...results.map(
       (result) =>
-        `| ${result.name} | ${result.outbox.maxPending} | ${result.outbox.maxLagSeconds.toFixed(1)} s | ${result.outbox.drainMs === null ? `não drenou em ${config.drainTimeoutMs / 1000} s` : `${(result.outbox.drainMs / 1000).toFixed(1)} s`} | ${result.outbox.published} | ${result.outbox.publishRate.toFixed(0)}/s |`,
+        `| ${result.name} | ${result.outbox.maxPending} | ${result.outbox.maxLagSeconds.toFixed(1)} s | ${result.outbox.drainMs === null ? `não drenou em ${config.drainTimeoutMs / 1000} s` : `${(result.outbox.drainMs / 1000).toFixed(1)} s`} | ${result.outbox.published} | ${result.outbox.publishRate.toFixed(0)}/s | ${result.outbox.eventsQueueMaxDepth} |`,
     ),
     "",
     ...results.flatMap((result) => [
@@ -514,10 +578,11 @@ const [hotWallet] = await createWallets(1);
 const sqsWallets = await createWallets(config.sqsWallets);
 
 const results: ScenarioResult[] = [];
+const runs = (scenario: string) => config.scenarios.includes(scenario);
 
 // 1. Wallets distribuídas: 70% BET, 20% WIN, 10% replay de uma operação recente do mesmo usuário virtual.
 const recent = new Map<number, Operation[]>();
-results.push(
+if (runs("distribuido")) results.push(
   await runHttpScenario(
     "distribuído",
     `${config.wallets} wallets; 70% BET, 20% WIN e 10% replays idempotentes`,
@@ -534,14 +599,14 @@ results.push(
 );
 
 // 2. Wallet disputada: todas as requisições na mesma wallet (BET e WIN alternados).
-results.push(
+if (runs("disputada")) results.push(
   await runHttpScenario("wallet disputada", "uma única wallet recebendo todas as requisições (BET e WIN alternados)", (vu, i) =>
     wagerOperation(hotWallet!, (vu + i) % 2 === 0 ? "BET" : "WIN", "1.00", `ld-${runId}-h-${vu}-${i}`),
   ),
 );
 
 // 3. Ingestão via SQS.
-results.push(await runSqsScenario(sqsWallets));
+if (runs("sqs")) results.push(await runSqsScenario(sqsWallets));
 
 console.log("\nReconciliando as wallets usadas...");
 const consistency = await reconcile([...distributedWallets, hotWallet!, ...sqsWallets]);
@@ -552,4 +617,5 @@ writeFileSync(`load-results/${runId}.md`, `${report}\n`);
 writeFileSync(`load-results/${runId}.json`, `${JSON.stringify({ env, config, results, consistency }, null, 2)}\n`);
 console.log(`\n${report}\n\nRelatório salvo em load-results/${runId}.md`);
 
+sqs.destroy();
 if (consistency.inconsistent.length > 0) process.exitCode = 1;

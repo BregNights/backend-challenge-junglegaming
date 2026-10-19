@@ -74,6 +74,7 @@ bun test
 | `bun run start` | API sem watch |
 | `bun run typecheck` | `tsc --noEmit` em modo estrito |
 | `bun run test:load` | Teste de carga contra a stack do compose (ver [docs/LOAD_TEST.md](docs/LOAD_TEST.md)) |
+| `bun run test:load:outbox` | Benchmark do pipeline da outbox no banco de teste, com broker falso |
 | `bun run migration:up` | Aplica as migrations pendentes |
 | `bun run migration:down` | Reverte a última migration |
 | `bun run migration:list` | Lista as migrations executadas e pendentes |
@@ -109,10 +110,13 @@ As variáveis de ambiente estão documentadas em [.env.example](.env.example).
       TTL.
 - [x] Testes de crash entre commit e ack, crash entre publicar e commitar, publishers concorrentes,
       workers concorrentes e reinício.
-- [x] Teste de carga (`bun run test:load`) com três cenários (wallets distribuídas, wallet disputada e
-      ingestão via SQS) e análise em [docs/LOAD_TEST.md](docs/LOAD_TEST.md). Zero erros e zero
-      divergências sob carga. Expôs dois gargalos, ainda não corrigidos: a vazão de publicação da
-      outbox e o consumer SQS sequencial.
+- [x] Teste de carga (`bun run test:load` e `bun run test:load:outbox`) com três cenários (wallets
+      distribuídas, wallet disputada e ingestão via SQS) e análise de antes e depois em
+      [docs/LOAD_TEST.md](docs/LOAD_TEST.md). Zero erros e zero divergências sob carga. Os dois
+      gargalos encontrados foram corrigidos:
+      - outbox: índice parcial, lotes de 100 e `UPDATE` em lote, com ganho de 12× a 41× no pipeline do
+        banco;
+      - consumer SQS: 2 loops por réplica e ack em lote, com ganho de 24%.
 
 ## Cobertura dos testes obrigatórios
 

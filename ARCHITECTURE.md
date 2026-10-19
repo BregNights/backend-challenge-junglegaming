@@ -334,7 +334,9 @@ os adapters mapeiem cada violação para uma resposta precisa.
 - `(next_attempt_at) WHERE status = 'PENDING_REFERENCE'`, para o worker.
 - `(provider_id, reference_external_transaction_id) WHERE status = 'PENDING_REFERENCE'`, para acordar
   quem espera uma referência que acabou de chegar.
-- `(next_attempt_at, sequence) WHERE published_at IS NULL` na outbox.
+- `(sequence) WHERE published_at IS NULL` na outbox, criado numa segunda migration depois do teste de
+  carga. O claim percorre só as linhas pendentes, na ordem de inserção, em vez de atravessar todo o
+  histórico publicado.
 
 ## 8. Mensageria
 
@@ -342,8 +344,13 @@ os adapters mapeiem cada violação para uma resposta precisa.
 
 Implementação: [`WagerTransactionConsumer`](src/wagering/sqs/wager-transaction.consumer.ts).
 
-- **Long polling** (20 s). O produtor usa `MessageGroupId = walletId`. Num lote, as mensagens de um
-  mesmo grupo (wallet) são processadas em ordem, e grupos diferentes em paralelo.
+- **Recebimento:**
+  - long polling de 5 s;
+  - `SQS_CONSUMER_CONCURRENCY` loops de recebimento por réplica (padrão 2, o melhor ponto medido no
+    teste de carga);
+  - o produtor usa `MessageGroupId = walletId`, e o SQS não entrega mensagens de um grupo com mensagem
+    em voo a outro receptor;
+  - num lote, as mensagens de uma wallet são processadas em ordem, e wallets diferentes em paralelo.
 - **O mesmo use case da API** (`ProcessWagerTransaction.executeFromMessage`). O registro na inbox,
   `(consumer_name, message_id)` com `INSERT … ON CONFLICT DO NOTHING`, é o primeiro comando da mesma
   transação SQL. Se duas entregas da mesma mensagem chegam juntas, a segunda espera no índice único e
@@ -353,9 +360,10 @@ Implementação: [`WagerTransactionConsumer`](src/wagering/sqs/wager-transaction
   - a idempotency key absorve mensagens diferentes com a mesma operação.
 
   O mesmo `messageId` com outro corpo é `INBOX_CONFLICT` e vai para a DLQ.
-- **Ack (`DeleteMessage`) só depois do commit.** Se o processo morrer entre o commit e o ack, a mensagem
-  volta depois do visibility timeout, a inbox a reconhece e ela recebe ack sem efeito. Se o próprio ack
-  falhar, vale o mesmo raciocínio.
+- **Ack só depois do commit,** num `DeleteMessageBatch` ao final de cada lote, com as mensagens cujo
+  commit já aconteceu. Se o processo morrer entre o commit e o ack, a mensagem volta depois do visibility
+  timeout, a inbox a reconhece e ela recebe ack sem efeito. Se o próprio ack falhar, vale o mesmo
+  raciocínio.
 - **Classificação de erros:**
 
 | Erro | Exemplos | Ação |
@@ -371,18 +379,28 @@ Implementação: [`WagerTransactionConsumer`](src/wagering/sqs/wager-transaction
   atrasa a wallet até se resolver ou chegar à DLQ.
 - **SIGTERM** (via `enableShutdownHooks`, no hook `beforeApplicationShutdown`, antes de o pool do banco
   fechar):
-  1. aborta o long polling;
+  1. para de iniciar mensagens novas e **espera** os long pollings em andamento terminarem, em vez de
+     abortá-los. Um polling abortado pode já ter recebido mensagens do servidor, que ficariam
+     invisíveis até o visibility timeout. O teste de carga mostrou exatamente isso no emulador, e o
+     long polling de 5 s fica abaixo do prazo de graça;
   2. deixa terminar, até `SHUTDOWN_GRACE_MS`, as mensagens que já começaram;
-  3. devolve imediatamente, com `ChangeMessageVisibility(0)`, as recebidas e não liquidadas.
+  3. devolve imediatamente, com `ChangeMessageVisibility(0)`, as recebidas e não liquidadas;
+  4. só aborta pollings se o prazo estourar, como último recurso.
 
   O teste de reinício usa visibility timeout de 30 s justamente para provar essa devolução.
 
 ### Transactional Outbox
 
 - O evento é gravado na mesma transação do efeito financeiro, e nunca é publicado antes do commit.
-- **Publisher:** `SELECT … WHERE published_at IS NULL AND next_attempt_at <= now() ORDER BY sequence
-  LIMIT n FOR UPDATE SKIP LOCKED`, seguido de `SendMessageBatch` e da marcação de publicado ou
-  `scheduleRetry` (backoff), tudo na mesma transação curta.
+- **Publisher:** numa transação curta, ele:
+  1. reivindica um lote com `SELECT … WHERE published_at IS NULL AND next_attempt_at <= now() ORDER BY
+     sequence LIMIT 100 FOR UPDATE SKIP LOCKED` (usa o índice parcial);
+  2. publica o lote em `SendMessageBatch` paralelos de até 10;
+  3. marca os publicados num único `UPDATE … WHERE id IN (…)`;
+  4. dá `scheduleRetry` (backoff) nos que falharam.
+
+  Medido no [teste de carga](docs/LOAD_TEST.md): o lado do banco passou de 1,3 mil para 16 mil
+  eventos/s, e não degrada mais com o histórico.
 - **Vários publishers pegam lotes disjuntos.** Se uma instância morrer, a conexão cai, o Postgres solta
   os locks e outra instância assume. `idle_in_transaction_session_timeout` limita o pior caso.
 - **Duplicatas são possíveis** (a instância publica e morre antes do commit). O destino usa
@@ -390,12 +408,12 @@ Implementação: [`WagerTransactionConsumer`](src/wagering/sqs/wager-transaction
 - **Destino:** `wallet-events.fifo`, com `MessageGroupId = walletId` (coluna `message_group_id`).
 - **Falha do broker:** a transação não é desfeita. As mensagens recebem `scheduleRetry` (backoff de 1 s
   a 5 min), e a tentativa e o erro ficam registrados.
-- **Lag:** a cada ciclo, o publisher atualiza `wagering_outbox_pending` e
+- **Lag:** no máximo uma vez por segundo, o publisher atualiza `wagering_outbox_pending` e
   `wagering_outbox_lag_seconds` (idade do evento pendente mais antigo).
-- **Limitação de ordem:** com vários publishers, dois lotes da mesma wallet podem ser publicados fora
-  de ordem (o lote 2 sai antes do lote 1). Os consumidores de eventos devem usar `walletVersion`
-  (`WalletBalanceChanged`) e `occurredAt` para ordenar. A ordem do FIFO é uma otimização, não uma
-  garantia.
+- **Limitação de ordem:** com vários publishers, e com os envios paralelos de um mesmo lote, dois
+  lotes da mesma wallet podem ser publicados fora de ordem. Os consumidores de eventos devem usar
+  `walletVersion` (`WalletBalanceChanged`) e `occurredAt` para ordenar. A ordem do FIFO é uma
+  otimização, não uma garantia.
 
 ### Referências fora de ordem
 
@@ -572,13 +590,19 @@ financeira, concorrência e idempotência. O ponto de extensão, porém, está n
 - **Triggers diferidos custam algumas buscas por índice por commit.** É o preço de ter as invariantes no
   banco. Não foram isolados no teste de carga; entram entre as hipóteses para os 43 ms de conexão por
   transação.
-- **Gargalos encontrados no teste de carga, ainda não corrigidos** (detalhes e correções propostas em
+- **Gargalos encontrados e corrigidos pelo teste de carga** (antes e depois em
   [docs/LOAD_TEST.md](docs/LOAD_TEST.md)):
-  1. **Outbox.** O claim percorre todo o histórico de eventos publicados, porque o índice que ele usa
-     inclui as linhas já publicadas, e os lotes são de só 10 eventos. A publicação, de cerca de 100/s,
-     fica abaixo da produção no pico, de cerca de 1.200/s. Os eventos atrasam, mas nunca se perdem.
-  2. **Consumer SQS.** Há um loop de recebimento por réplica, e cada lote é processado de forma
-     praticamente sequencial: 62 mensagens/s, contra 29 ms de processamento por mensagem.
+  1. **Outbox.** O claim percorria todo o histórico publicado. O índice parcial, os lotes de 100 e o
+     `UPDATE` em lote deram de 12× a 41× no pipeline do banco.
+  2. **Consumer SQS.** Era praticamente sequencial. Com 2 loops por réplica e ack em lote, ganhou 24%.
+
+  Neste ambiente, o limite de ponta a ponta da outbox e do consumer passou a ser o emulador. O custo de
+  envio do MiniStack cresce com a profundidade da fila, então a medição definitiva precisa do SQS real.
+- **Ordem dos eventos é best-effort.** Publishers concorrentes e envios em paralelo podem inverter dois
+  lotes de eventos da mesma wallet. Os consumidores devem ordenar por `walletVersion`.
+- **A outbox não tem retenção:** eventos publicados nunca são apagados. O índice parcial os tira do
+  caminho do claim, mas uma rotina de limpeza (apagar ou arquivar depois de N dias) manteria a tabela
+  pequena.
 - **Índices únicos compostos extras em `wager_transactions`** (alvos das FKs compostas) encarecem a
   escrita em troca de garantias de escopo no schema.
 - **Papel de banco único no ambiente local.** Em produção, o papel da aplicação seria separado do papel

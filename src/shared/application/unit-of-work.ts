@@ -69,6 +69,8 @@ export interface OutboxRepository {
   claimDue(now: Date, limit: number): Promise<OutboxMessage[]>;
   /** Persiste o estado de publicação (publicada / agenda de retry) de uma mensagem reivindicada. */
   saveDeliveryState(message: OutboxMessage): Promise<void>;
+  /** Marca várias mensagens reivindicadas como publicadas, num único comando. */
+  markPublished(ids: readonly string[], at: Date): Promise<void>;
   backlog(now: Date): Promise<OutboxBacklog>;
 }
 
