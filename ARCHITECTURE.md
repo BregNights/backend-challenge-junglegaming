@@ -562,11 +562,23 @@ financeira, concorrência e idempotência. O ponto de extensão, porém, está n
 
 ## 15. Trade-offs e limitações
 
-- **O lock pessimista serializa uma wallet muito disputada:** a vazão por wallet fica limitada pela
-  latência da transação. É aceitável, porque uma wallet é um jogador, mas é o primeiro ponto a medir no
-  teste de carga.
+- **O lock pessimista serializa uma wallet muito disputada.** O [teste de carga](docs/LOAD_TEST.md)
+  confirmou em números:
+  - cerca de 160 operações/s numa única wallet, com 8 ou com 64 clientes;
+  - latência crescendo com a fila (p50 de 403 ms com 64 clientes);
+  - wallets distribuídas chegando a cerca de 690/s no mesmo ambiente.
+
+  É aceitável, porque uma wallet é um jogador.
 - **Triggers diferidos custam algumas buscas por índice por commit.** É o preço de ter as invariantes no
-  banco; deve ser medido no teste de carga.
+  banco. Não foram isolados no teste de carga; entram entre as hipóteses para os 43 ms de conexão por
+  transação.
+- **Gargalos encontrados no teste de carga, ainda não corrigidos** (detalhes e correções propostas em
+  [docs/LOAD_TEST.md](docs/LOAD_TEST.md)):
+  1. **Outbox.** O claim percorre todo o histórico de eventos publicados, porque o índice que ele usa
+     inclui as linhas já publicadas, e os lotes são de só 10 eventos. A publicação, de cerca de 100/s,
+     fica abaixo da produção no pico, de cerca de 1.200/s. Os eventos atrasam, mas nunca se perdem.
+  2. **Consumer SQS.** Há um loop de recebimento por réplica, e cada lote é processado de forma
+     praticamente sequencial: 62 mensagens/s, contra 29 ms de processamento por mensagem.
 - **Índices únicos compostos extras em `wager_transactions`** (alvos das FKs compostas) encarecem a
   escrita em troca de garantias de escopo no schema.
 - **Papel de banco único no ambiente local.** Em produção, o papel da aplicação seria separado do papel

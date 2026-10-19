@@ -6,6 +6,7 @@ duplicadas, fora de ordem e processadas por várias instâncias ao mesmo tempo.
 
 - **Enunciado:** [docs/CHALLENGE.md](docs/CHALLENGE.md)
 - **Decisões, trade-offs e limitações:** [ARCHITECTURE.md](ARCHITECTURE.md)
+- **Teste de carga (metodologia, resultados e análise):** [docs/LOAD_TEST.md](docs/LOAD_TEST.md)
 
 **Stack:** Bun 1.4, TypeScript estrito, NestJS 12, MikroORM 7, PostgreSQL 17, SQS (MiniStack) e
 Docker Compose.
@@ -72,6 +73,7 @@ bun test
 | `bun run dev` | API com reload automático |
 | `bun run start` | API sem watch |
 | `bun run typecheck` | `tsc --noEmit` em modo estrito |
+| `bun run test:load` | Teste de carga contra a stack do compose (ver [docs/LOAD_TEST.md](docs/LOAD_TEST.md)) |
 | `bun run migration:up` | Aplica as migrations pendentes |
 | `bun run migration:down` | Reverte a última migration |
 | `bun run migration:list` | Lista as migrations executadas e pendentes |
@@ -107,7 +109,10 @@ As variáveis de ambiente estão documentadas em [.env.example](.env.example).
       TTL.
 - [x] Testes de crash entre commit e ack, crash entre publicar e commitar, publishers concorrentes,
       workers concorrentes e reinício.
-- [ ] Teste de carga (`bun run test:load`).
+- [x] Teste de carga (`bun run test:load`) com três cenários (wallets distribuídas, wallet disputada e
+      ingestão via SQS) e análise em [docs/LOAD_TEST.md](docs/LOAD_TEST.md). Zero erros e zero
+      divergências sob carga. Expôs dois gargalos, ainda não corrigidos: a vazão de publicação da
+      outbox e o consumer SQS sequencial.
 
 ## Cobertura dos testes obrigatórios
 
